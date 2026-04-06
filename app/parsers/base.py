@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from app.parsers.types import ParserCapabilities, ProbeResult
+from app.parsers.types import ClipMetadata, ParserCapabilities, ProbeResult
 
 
 class BaseParser(ABC):
@@ -16,7 +16,7 @@ class BaseParser(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def parse_metadata(self, file_path: Path) -> dict[str, object]:
+    def parse_metadata(self, file_path: Path) -> ClipMetadata:
         raise NotImplementedError
 
     @abstractmethod
