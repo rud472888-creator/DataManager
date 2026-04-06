@@ -76,7 +76,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertNotIn("checksum", response.json()["stubbed_components"])
-        self.assertIn("reports", response.json()["stubbed_components"])
+        self.assertNotIn("reports", response.json()["stubbed_components"])
         self.assertIn("dependencies", response.json())
         self.assertIn("queue_depth", response.json())
 
@@ -97,13 +97,15 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(created.status_code, 201)
         job_id = created.json()["job_id"]
         terminal_job = self._wait_for_terminal_state(job_id)
-        self.assertEqual(terminal_job["state"], "WARN")
-        self.assertEqual(terminal_job["current_step"], "copy_complete_pending_downstream")
-        self.assertEqual(terminal_job["stats"]["processed_files"], 1)
+        self.assertEqual(terminal_job["state"], "COMPLETED")
+        self.assertEqual(terminal_job["current_step"], "completed")
+        self.assertEqual(terminal_job["stats"]["processed_files"], 4)
         job_file = self.runtime.persistence.job_files.list_for_job(job_id)[0]
         self.assertEqual(job_file.verify_main_state, "VERIFIED")
         self.assertEqual(job_file.verify_backup_state, "SKIPPED")
         self.assertEqual(job_file.source_checksum_sha256, job_file.main_checksum_sha256)
+        self.assertIn(job_file.parse_state, {"PARSED", "CAPABILITY_GATED"})
+        self.assertEqual(job_file.capture_state, "CAPABILITY_GATED")
         self.assertIn("bytes_done", terminal_job["stats"])
         self.assertIn("speed_mbps", terminal_job["stats"])
         self.assertIn("eta_sec", terminal_job["stats"])
@@ -111,6 +113,12 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertIn("warning_count", terminal_job)
         self.assertIn("error_count", terminal_job)
         self.assertEqual(terminal_job["operator_origin"], "remote_web")
+        reports = self.client.get(f"/api/jobs/{job_id}/reports", headers=self.auth_headers)
+        self.assertEqual(reports.status_code, 200)
+        self.assertEqual(len(reports.json()["items"]), 4)
+        clips = self.client.get(f"/api/clips?job_id={job_id}", headers=self.auth_headers)
+        self.assertEqual(clips.status_code, 200)
+        self.assertEqual(len(clips.json()["items"]), 1)
 
         listed = self.client.get("/api/jobs", headers=self.auth_headers)
         self.assertEqual(listed.status_code, 200)
@@ -202,4 +210,4 @@ class ApiIntegrationTests(unittest.TestCase):
         raise AssertionError(f"Job {job_id} did not reach one of {states}")
 
     def _wait_for_terminal_state(self, job_id: str) -> dict[str, object]:
-        return self._wait_for_state(job_id, {"WARN", "FAILED", "CANCELLED"})
+        return self._wait_for_state(job_id, {"COMPLETED", "WARN", "FAILED", "CANCELLED"})

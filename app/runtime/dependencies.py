@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+from app.parsers.braw_parser import BrawMetadataAdapter
+
 
 def probe_runtime_dependencies() -> dict[str, object]:
-    """Dependency shell for A2.
+    """Probe the runtime-owned dependency surface honestly."""
 
-    Actual BRAW and report-tool verification is deferred to later milestones.
-    """
+    adapter = BrawMetadataAdapter.from_environment()
+    adapter_status = "ok" if adapter.is_available() else "capability_gated"
 
     return {
         "python": {"status": "ok"},
-        "braw_sdk": {"status": "stubbed", "message": "Not validated in A2"},
-        "frame_capture": {"status": "stubbed", "message": "Not validated in A2"},
-        "report_generators": {"status": "stubbed", "message": "Not validated in A2"},
+        "braw_metadata_adapter": {
+            "status": adapter_status,
+            "message": adapter.resolution_reason,
+            "command": list(adapter.command) if adapter.command is not None else None,
+        },
+        "frame_capture": {
+            "status": "stubbed",
+            "message": "Not validated in the current milestone",
+        },
+        "report_generators": {
+            "status": "ok",
+            "message": "Stdlib-backed report generators are available",
+        },
     }

@@ -447,6 +447,14 @@ class ReportsRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_report(self, report_id: str) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM reports WHERE report_id = ?",
+                (report_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
 
 class JobFilesRepository:
     def __init__(self, database: Database, events_repository: EventsRepository) -> None:
@@ -675,6 +683,58 @@ class JobFilesRepository:
             )
             connection.commit()
             return cursor.rowcount
+
+    def update_parse_state(
+        self,
+        *,
+        job_file_id: int,
+        parse_state: str,
+        warning_code: str | None = None,
+        error_code: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        updates = ["parse_state = ?", "updated_at = ?"]
+        values: list[Any] = [parse_state, utc_now_iso()]
+        if warning_code is not None:
+            updates.append("warning_code = ?")
+            values.append(warning_code)
+        if error_code is not None:
+            updates.append("error_code = ?")
+            values.append(error_code)
+        if metadata is not None:
+            updates.append("metadata_json = ?")
+            values.append(json.dumps(metadata, sort_keys=True))
+        values.append(job_file_id)
+        with self.database.connect() as connection:
+            connection.execute(
+                f"UPDATE job_files SET {', '.join(updates)} WHERE job_file_id = ?",
+                tuple(values),
+            )
+            connection.commit()
+
+    def update_capture_state(
+        self,
+        *,
+        job_file_id: int,
+        capture_state: str,
+        warning_code: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        updates = ["capture_state = ?", "updated_at = ?"]
+        values: list[Any] = [capture_state, utc_now_iso()]
+        if warning_code is not None:
+            updates.append("warning_code = ?")
+            values.append(warning_code)
+        if metadata is not None:
+            updates.append("metadata_json = ?")
+            values.append(json.dumps(metadata, sort_keys=True))
+        values.append(job_file_id)
+        with self.database.connect() as connection:
+            connection.execute(
+                f"UPDATE job_files SET {', '.join(updates)} WHERE job_file_id = ?",
+                tuple(values),
+            )
+            connection.commit()
 
 
 class PersistenceBundle:

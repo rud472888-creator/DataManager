@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes_clips import router as clips_router
 from app.api.routes_jobs import router as jobs_router
 from app.api.routes_reports import router as reports_router
 from app.api.routes_runtime import router as runtime_router
@@ -24,6 +25,7 @@ def create_api_app(*, settings: Settings, runtime_agent: RuntimeAgent, event_bus
     app.include_router(runtime_router)
     app.include_router(volumes_router)
     app.include_router(jobs_router)
+    app.include_router(clips_router)
     app.include_router(reports_router)
     app.include_router(websocket_router)
 

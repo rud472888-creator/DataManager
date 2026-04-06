@@ -64,16 +64,20 @@ class WorkerFlowTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(100):
             job = self.runtime.get_job(job_id)
             assert job is not None
-            if job["state"] in {"WARN", "FAILED"}:
+            if job["state"] in {"COMPLETED", "WARN", "FAILED"}:
                 break
             await asyncio.sleep(0.05)
-        self.assertEqual(job["state"], "WARN")
-        self.assertEqual(job["stats"]["processed_files"], 1)
+        self.assertEqual(job["state"], "COMPLETED")
+        self.assertEqual(job["stats"]["processed_files"], 4)
         job_file = self.runtime.persistence.job_files.list_for_job(job_id)[0]
         self.assertEqual(job_file.verify_main_state, "VERIFIED")
         self.assertEqual(job_file.verify_backup_state, "SKIPPED")
         self.assertIsNotNone(job_file.source_checksum_sha256)
         self.assertEqual(job_file.source_checksum_sha256, job_file.main_checksum_sha256)
+        self.assertIn(job_file.parse_state, {"PARSED", "CAPABILITY_GATED"})
+        self.assertEqual(job_file.capture_state, "CAPABILITY_GATED")
+        self.assertEqual(len(self.runtime.list_reports(job_id)), 4)
+        self.assertEqual(len(self.runtime.list_clips(job_id=job_id)), 1)
         copied = Path(self.temp_dir.name) / "dest" / "Project_Delta" / "01_footage" / "CARD_A" / "A001_C003.braw"
         self.assertTrue(copied.exists())
 
@@ -90,7 +94,7 @@ class WorkerFlowTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(100):
             job = self.runtime.get_job(job_id)
             assert job is not None
-            if job["state"] in {"WARN", "FAILED"}:
+            if job["state"] in {"COMPLETED", "WARN", "FAILED"}:
                 break
             await asyncio.sleep(0.05)
 

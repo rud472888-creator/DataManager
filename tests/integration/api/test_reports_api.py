@@ -113,7 +113,7 @@ class ReportApiIntegrationTests(unittest.TestCase):
         while time.monotonic() < deadline:
             response = self.client.get(f"/api/jobs/{job_id}", headers=self.auth_headers)
             payload = response.json()
-            if payload["state"] in {"WARN", "FAILED", "CANCELLED"}:
+            if payload["state"] in {"COMPLETED", "WARN", "FAILED", "CANCELLED"}:
                 return payload
             time.sleep(0.05)
         raise AssertionError(f"Job {job_id} did not reach a terminal state")

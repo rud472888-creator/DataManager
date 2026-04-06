@@ -10,18 +10,18 @@ Completed:
 - local-runtime-only source scan with `job_files` population and default noise exclusion
 - destination preparation under runtime-known destination roots only
 - real local byte-copy execution for main destination and best-effort backup flow
-- progress/event emission during copy with persistence-backed job and file status
+- progress/event emission during copy/verify/parse/capture/reporting with persistence-backed job and file status
 - real cancel handling during runtime execution
 - safe file-boundary pause and runtime-backed resume
 - recovery baseline for interrupted active jobs and in-progress file rows
+- real SHA-256 verification with durable per-file checksum results
+- runtime-local metadata parsing and `/api/clips`
+- runtime-owned report generation and safe `report_id` downloads
 - remote console updates for status, dependency/stub visibility, volume selection, queue/job progress, warnings/errors, report readiness messaging, and command observation
 - browser-authority guard coverage to keep the console REST/WebSocket-only and runtime-first
 - verified compile, unit/integration/system tests, and live local server/API checks
 
 Still stubbed after A2:
 
-- checksum verification
-- parser integrations
-- report generation
 - frame capture
 - richer retry/rebuild policy

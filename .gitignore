@@ -16,5 +16,7 @@ build/
 *.sqlite3
 .omx/logs/
 .omx/metrics.json
+.omx/reports/
 .omx/state/
+.omx/team/
 .omx/tmux-hook.json
