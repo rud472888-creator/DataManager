@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Footage Data Manager</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="card hero">
+        <p class="eyebrow">Remote Console Shell</p>
+        <h1>Footage Data Manager A2</h1>
+        <p class="copy">
+          This browser surface is a remote control and monitoring shell only.
+          All real filesystem and media work remains inside the local runtime.
+        </p>
+        <div class="token-row">
+          <label>
+            Token
+            <input id="tokenInput" type="password" value="change-me" />
+          </label>
+          <button id="reloadButton" type="button">Reconnect</button>
+        </div>
+      </section>
+      <section class="card grid">
+        <h2>Runtime Status</h2>
+        <pre id="status">Loading...</pre>
+        <h2>Volumes</h2>
+        <pre id="volumes">Loading...</pre>
+      </section>
+      <section class="card">
+        <div class="stack">
+          <div>
+            <h2>Create Job</h2>
+            <form id="jobForm" class="form">
+              <label>
+                Project name
+                <input id="projectName" type="text" value="Project_001" />
+              </label>
+              <label>
+                Source volume
+                <select id="sourceSelect"></select>
+              </label>
+              <label>
+                Main destination
+                <select id="mainDestSelect"></select>
+              </label>
+              <label>
+                Backup destination
+                <select id="backupDestSelect"></select>
+              </label>
+              <button type="submit">Create job</button>
+            </form>
+          </div>
+          <div>
+            <h2>Jobs</h2>
+            <div id="jobs" class="jobs"></div>
+          </div>
+        </div>
+      </section>
+      <section class="card">
+        <h2>Event Feed</h2>
+        <pre id="event">Waiting for websocket...</pre>
+      </section>
+    </main>
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>

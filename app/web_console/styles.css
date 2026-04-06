@@ -1,0 +1,127 @@
+:root {
+  color-scheme: light;
+  --bg: #f5f5f2;
+  --fg: #141414;
+  --muted: #6c6c66;
+  --border: #1c1c1c;
+  --surface: #ffffff;
+  --radius-outer: 24px;
+  --radius-inner: 12px;
+  --space: 20px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Helvetica Neue", sans-serif;
+  background: linear-gradient(180deg, #fafaf7 0%, #efefe8 100%);
+  color: var(--fg);
+}
+
+.shell {
+  width: min(960px, calc(100% - 32px));
+  margin: 32px auto;
+  display: grid;
+  gap: 16px;
+}
+
+.hero {
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-outer);
+  background: var(--surface);
+  padding: var(--space);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.copy {
+  max-width: 60ch;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+}
+
+.stack {
+  display: grid;
+  gap: 24px;
+}
+
+.token-row,
+.form,
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: end;
+}
+
+.form label,
+.token-row label {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+}
+
+input,
+select,
+button {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  padding: 10px 12px;
+  background: #fff;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.jobs {
+  display: grid;
+  gap: 12px;
+}
+
+.job-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  padding: 14px;
+  background: #f8f8f4;
+}
+
+.job-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.state {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+pre {
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  background: #f1f1ec;
+  min-height: 160px;
+}
