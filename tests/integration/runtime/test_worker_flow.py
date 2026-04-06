@@ -69,5 +69,10 @@ class WorkerFlowTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
         self.assertEqual(job["state"], "WARN")
         self.assertEqual(job["stats"]["processed_files"], 1)
+        job_file = self.runtime.persistence.job_files.list_for_job(job_id)[0]
+        self.assertEqual(job_file.verify_main_state, "VERIFIED")
+        self.assertEqual(job_file.verify_backup_state, "SKIPPED")
+        self.assertIsNotNone(job_file.source_checksum_sha256)
+        self.assertEqual(job_file.source_checksum_sha256, job_file.main_checksum_sha256)
         copied = Path(self.temp_dir.name) / "dest" / "Project_Delta" / "01_footage" / "CARD_A" / "A001_C003.braw"
         self.assertTrue(copied.exists())

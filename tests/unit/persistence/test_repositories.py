@@ -87,3 +87,48 @@ class RepositoryTests(unittest.TestCase):
         events = self.persistence.events.list_events_for_job(job.job_id)
         self.assertEqual(len(events), 2)
         self.assertEqual(events[1].command_name, "cancel")
+
+    def test_mark_in_progress_as_failed_covers_copy_and_verify_states(self) -> None:
+        self.persistence.jobs.create_job(
+            {
+                "job_id": "JOB-TEST-VERIFY",
+                "retry_of_job_id": None,
+                "project_name": "Project Verify",
+                "source_volume_id": "source::/Volumes/CARD_A",
+                "dest_main_id": "destination::/tmp/DEST",
+                "dest_backup_id": None,
+                "state": JobState.COPYING.value,
+                "current_step": "copying",
+                "resume_step": None,
+                "operator_origin": "test",
+                "policy_json": {},
+                "stats_json": {"stubbed": False},
+                "warning_count": 0,
+                "error_count": 0,
+                "current_file_relpath": None,
+            }
+        )
+        self.persistence.job_files.replace_for_job(
+            "JOB-TEST-VERIFY",
+            [{"relative_path": "A001_C001.braw", "size_bytes": 16, "metadata": {}, "has_backup": False}],
+        )
+        job_file = self.persistence.job_files.list_for_job("JOB-TEST-VERIFY")[0]
+        self.persistence.job_files.update_copy_state(
+            job_file_id=job_file.job_file_id,
+            main_state="IN_PROGRESS",
+        )
+        self.persistence.job_files.update_verify_state(
+            job_file_id=job_file.job_file_id,
+            verify_main_state="IN_PROGRESS",
+        )
+
+        affected = self.persistence.job_files.mark_in_progress_as_failed(
+            "JOB-TEST-VERIFY",
+            "runtime_interrupted",
+        )
+
+        self.assertEqual(affected, 1)
+        updated = self.persistence.job_files.list_for_job("JOB-TEST-VERIFY")[0]
+        self.assertEqual(updated.copy_main_state, "FAILED")
+        self.assertEqual(updated.verify_main_state, "FAILED")
+        self.assertEqual(updated.error_code, "runtime_interrupted")

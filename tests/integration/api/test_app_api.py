@@ -63,6 +63,7 @@ class ApiIntegrationTests(unittest.TestCase):
         response = self.client.get("/api/runtime/status", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
+        self.assertNotIn("checksum", response.json()["stubbed_components"])
 
         volumes = self.client.get("/api/volumes", headers=self.auth_headers)
         self.assertEqual(volumes.status_code, 200)
@@ -83,6 +84,10 @@ class ApiIntegrationTests(unittest.TestCase):
         terminal_job = self._wait_for_terminal_state(job_id)
         self.assertEqual(terminal_job["state"], "WARN")
         self.assertEqual(terminal_job["stats"]["processed_files"], 1)
+        job_file = self.runtime.persistence.job_files.list_for_job(job_id)[0]
+        self.assertEqual(job_file.verify_main_state, "VERIFIED")
+        self.assertEqual(job_file.verify_backup_state, "SKIPPED")
+        self.assertEqual(job_file.source_checksum_sha256, job_file.main_checksum_sha256)
 
         listed = self.client.get("/api/jobs", headers=self.auth_headers)
         self.assertEqual(listed.status_code, 200)

@@ -704,7 +704,7 @@ class RuntimeAgent:
                 main_state="COPIED",
                 backup_state=backup_state,
                 warning_code=backup_reason,
-                error_code=None if backup_state != "FAILED" else backup_reason,
+                error_code=None,
                 metadata=file_metadata,
             )
             self.persistence.events.append_event(
@@ -774,6 +774,247 @@ class RuntimeAgent:
                 return "paused"
 
         return "completed"
+
+    async def _verify_job(self, job_id: str, prepared: dict[str, object]) -> str:
+        job = self.persistence.jobs.get_job(job_id)
+        assert job is not None
+        files = self.persistence.job_files.list_verify_pending(job_id)
+        source_root = Path(prepared["source_root"])
+        main_footage_root = Path(prepared["main_paths"]["footage_root"])
+        backup_footage_root = (
+            Path(prepared["backup_paths"]["footage_root"])
+            if prepared["backup_paths"] is not None
+            else None
+        )
+        total_files = len(files)
+        total_bytes = sum(
+            file.size_bytes * (2 + (1 if file.copy_backup_state == "COPIED" else 0))
+            for file in files
+        )
+        processed_files = 0
+        bytes_done_total = 0
+        warning_count = job.warning_count
+        error_count = job.error_count
+        started = time.monotonic()
+
+        for file_record in files:
+            control = self._controls.setdefault(job_id, JobControl())
+            if control.cancel_requested:
+                await self._cancel_running_job(job_id)
+                return "cancelled"
+
+            source_path = source_root / file_record.relative_path
+            main_destination = main_footage_root / file_record.relative_path
+            backup_destination = (
+                backup_footage_root / file_record.relative_path
+                if backup_footage_root is not None
+                else None
+            )
+            current_relpath = file_record.relative_path
+            file_metadata = {
+                **file_record.metadata(),
+                "verify_source_path": str(source_path),
+                "verify_main_path": str(main_destination),
+                "verify_backup_path": str(backup_destination) if backup_destination else None,
+            }
+            self.persistence.jobs.update_job_runtime_fields(
+                job_id=job_id,
+                current_step="verifying",
+                current_file_relpath=current_relpath,
+            )
+            self.persistence.job_files.update_verify_state(
+                job_file_id=file_record.job_file_id,
+                verify_main_state="IN_PROGRESS",
+                verify_backup_state=(
+                    "FAILED"
+                    if file_record.copy_backup_state == "FAILED"
+                    else "SKIPPED" if backup_destination is None else file_record.verify_backup_state
+                ),
+                warning_code=file_record.warning_code,
+                error_code=None,
+                metadata=file_metadata,
+            )
+
+            source_checksum: str | None = None
+            main_checksum: str | None = None
+            try:
+                source_checksum = await sha256_file(
+                    source_path,
+                    cancel_check=lambda: self._controls.get(job_id, JobControl()).cancel_requested,
+                )
+                main_checksum = await sha256_file(
+                    main_destination,
+                    cancel_check=lambda: self._controls.get(job_id, JobControl()).cancel_requested,
+                )
+                if source_checksum != main_checksum:
+                    raise ChecksumMismatchError(
+                        path=main_destination,
+                        expected=source_checksum,
+                        actual=main_checksum,
+                    )
+            except asyncio.CancelledError:
+                await self._cancel_running_job(job_id)
+                return "cancelled"
+            except FileNotFoundError as exc:
+                error_count += 1
+                self.persistence.job_files.update_verify_state(
+                    job_file_id=file_record.job_file_id,
+                    source_checksum_sha256=source_checksum,
+                    main_checksum_sha256=main_checksum,
+                    verify_main_state="FAILED",
+                    verify_backup_state="SKIPPED",
+                    error_code="verify_main_missing",
+                    metadata=file_metadata,
+                )
+                self.persistence.events.append_event(
+                    job_id=job_id,
+                    event_type="job.file_result",
+                    level="ERROR",
+                    origin="runtime.verify",
+                    message=f"Main verification missing file for {current_relpath}: {exc}",
+                    payload={"relative_path": current_relpath},
+                    reason_code="verify_main_missing",
+                )
+                raise RuntimeError(f"Main verification failed for {current_relpath}") from exc
+            except ChecksumMismatchError as exc:
+                error_count += 1
+                self.persistence.job_files.update_verify_state(
+                    job_file_id=file_record.job_file_id,
+                    source_checksum_sha256=source_checksum,
+                    main_checksum_sha256=main_checksum,
+                    verify_main_state="FAILED",
+                    verify_backup_state="SKIPPED",
+                    error_code="verify_main_mismatch",
+                    metadata=file_metadata,
+                )
+                self.persistence.events.append_event(
+                    job_id=job_id,
+                    event_type="job.file_result",
+                    level="ERROR",
+                    origin="runtime.verify",
+                    message=str(exc),
+                    payload={"relative_path": current_relpath},
+                    reason_code="verify_main_mismatch",
+                )
+                raise RuntimeError(f"Main verification failed for {current_relpath}") from exc
+
+            backup_state = "SKIPPED"
+            backup_checksum: str | None = None
+            warning_code = file_record.warning_code
+            if file_record.copy_backup_state == "FAILED":
+                backup_state = "FAILED"
+                warning_code = warning_code or "copy_backup_failed"
+            elif backup_destination is not None:
+                self.persistence.job_files.update_verify_state(
+                    job_file_id=file_record.job_file_id,
+                    verify_backup_state="IN_PROGRESS",
+                    metadata=file_metadata,
+                )
+                try:
+                    backup_checksum = await sha256_file(
+                        backup_destination,
+                        cancel_check=lambda: self._controls.get(job_id, JobControl()).cancel_requested,
+                    )
+                    if source_checksum != backup_checksum:
+                        backup_state = "FAILED"
+                        warning_code = "verify_backup_mismatch"
+                        warning_count += 1
+                    else:
+                        backup_state = "VERIFIED"
+                except asyncio.CancelledError:
+                    await self._cancel_running_job(job_id)
+                    return "cancelled"
+                except FileNotFoundError as exc:
+                    backup_state = "FAILED"
+                    warning_code = "verify_backup_missing"
+                    warning_count += 1
+                    self.persistence.events.append_event(
+                        job_id=job_id,
+                        event_type="job.file_result",
+                        level="WARN",
+                        origin="runtime.verify",
+                        message=f"Backup verification missing file for {current_relpath}: {exc}",
+                        payload={"relative_path": current_relpath},
+                        reason_code="verify_backup_missing",
+                    )
+
+            self.persistence.job_files.update_verify_state(
+                job_file_id=file_record.job_file_id,
+                source_checksum_sha256=source_checksum,
+                main_checksum_sha256=main_checksum,
+                backup_checksum_sha256=backup_checksum,
+                verify_main_state="VERIFIED",
+                verify_backup_state=backup_state,
+                warning_code=warning_code,
+                metadata=file_metadata,
+            )
+            if backup_state == "FAILED" and warning_code in {"verify_backup_mismatch", "verify_backup_missing"}:
+                self.persistence.events.append_event(
+                    job_id=job_id,
+                    event_type="job.file_result",
+                    level="WARN",
+                    origin="runtime.verify",
+                    message=f"Backup verification warning for {current_relpath}",
+                    payload={
+                        "relative_path": current_relpath,
+                        "verify_backup_state": backup_state,
+                    },
+                    reason_code=warning_code,
+                )
+            self.persistence.events.append_event(
+                job_id=job_id,
+                event_type="job.file_result",
+                level="INFO" if backup_state != "FAILED" else "WARN",
+                origin="runtime.verify",
+                message=f"Verified {current_relpath}",
+                payload={
+                    "relative_path": current_relpath,
+                    "verify_main_state": "VERIFIED",
+                    "verify_backup_state": backup_state,
+                },
+            )
+
+            processed_files += 1
+            bytes_done_total += file_record.size_bytes * (
+                2 + (1 if file_record.copy_backup_state == "COPIED" else 0)
+            )
+            payload = {
+                "state": JobState.VERIFYING.value,
+                "current_file": current_relpath,
+                "processed_files": processed_files,
+                "total_files": total_files,
+                "bytes_done": bytes_done_total,
+                "bytes_total": total_bytes,
+                "speed_mbps": round(
+                    (bytes_done_total / 1024 / 1024) / max(time.monotonic() - started, 0.001),
+                    2,
+                ),
+                "eta_sec": 0 if processed_files >= total_files else None,
+                "warnings": warning_count,
+                "errors": error_count,
+                "message": "File verified",
+            }
+            self.persistence.jobs.update_job_runtime_fields(
+                job_id=job_id,
+                stats=payload,
+                current_step="verifying",
+                current_file_relpath=current_relpath,
+                warning_count=warning_count,
+                error_count=error_count,
+            )
+            await self.event_bus.publish("job.progress", payload, job_id=job_id)
+
+        return "completed"
+
+    def _verification_warning_reason(self, job_id: str) -> str:
+        has_backup_warning = any(
+            record.warning_code in {"copy_backup_failed", "verify_backup_missing", "verify_backup_mismatch"}
+            or record.verify_backup_state == "FAILED"
+            for record in self.persistence.job_files.list_for_job(job_id)
+        )
+        if has_backup_warning:
+            return "Verification completed with backup warnings; parse/capture/report remain stubbed in A2"
+        return "Verification completed; parse/capture/report remain stubbed in A2"
 
     async def _cancel_running_job(self, job_id: str) -> None:
         self.persistence.job_files.mark_in_progress_as_failed(job_id, "cancelled")
