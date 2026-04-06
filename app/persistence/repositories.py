@@ -532,6 +532,7 @@ class JobFilesRepository:
         job_file_id: int,
         main_state: str | None = None,
         backup_state: str | None = None,
+        warning_code: str | None = None,
         error_code: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -543,6 +544,9 @@ class JobFilesRepository:
         if backup_state is not None:
             updates.append("copy_backup_state = ?")
             values.append(backup_state)
+        if warning_code is not None:
+            updates.append("warning_code = ?")
+            values.append(warning_code)
         if error_code is not None:
             updates.append("error_code = ?")
             values.append(error_code)
@@ -557,6 +561,88 @@ class JobFilesRepository:
             )
             connection.commit()
 
+    def update_verify_state(
+        self,
+        *,
+        job_file_id: int,
+        source_checksum_sha256: str | None = None,
+        main_checksum_sha256: str | None = None,
+        backup_checksum_sha256: str | None = None,
+        verify_main_state: str | None = None,
+        verify_backup_state: str | None = None,
+        warning_code: str | None = None,
+        error_code: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        updates = ["updated_at = ?"]
+        values: list[Any] = [utc_now_iso()]
+        if source_checksum_sha256 is not None:
+            updates.append("source_checksum_sha256 = ?")
+            values.append(source_checksum_sha256)
+        if main_checksum_sha256 is not None:
+            updates.append("main_checksum_sha256 = ?")
+            values.append(main_checksum_sha256)
+        if backup_checksum_sha256 is not None:
+            updates.append("backup_checksum_sha256 = ?")
+            values.append(backup_checksum_sha256)
+        if verify_main_state is not None:
+            updates.append("verify_main_state = ?")
+            values.append(verify_main_state)
+        if verify_backup_state is not None:
+            updates.append("verify_backup_state = ?")
+            values.append(verify_backup_state)
+        if warning_code is not None:
+            updates.append("warning_code = ?")
+            values.append(warning_code)
+        if error_code is not None:
+            updates.append("error_code = ?")
+            values.append(error_code)
+        if metadata is not None:
+            updates.append("metadata_json = ?")
+            values.append(json.dumps(metadata, sort_keys=True))
+        values.append(job_file_id)
+        with self.database.connect() as connection:
+            connection.execute(
+                f"UPDATE job_files SET {', '.join(updates)} WHERE job_file_id = ?",
+                tuple(values),
+            )
+            connection.commit()
+
+    def list_in_progress(self, job_id: str) -> list[JobFileRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM job_files
+                WHERE job_id = ?
+                  AND (
+                    copy_main_state = 'IN_PROGRESS'
+                    OR copy_backup_state = 'IN_PROGRESS'
+                    OR verify_main_state = 'IN_PROGRESS'
+                    OR verify_backup_state = 'IN_PROGRESS'
+                  )
+                ORDER BY relative_path ASC
+                """,
+                (job_id,),
+            ).fetchall()
+        return [JobFileRecord.from_row(row) for row in rows]
+
+    def list_verify_pending(self, job_id: str) -> list[JobFileRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM job_files
+                WHERE job_id = ?
+                  AND copy_main_state = 'COPIED'
+                  AND (
+                    verify_main_state != 'VERIFIED'
+                    OR verify_backup_state NOT IN ('VERIFIED', 'SKIPPED')
+                  )
+                ORDER BY relative_path ASC
+                """,
+                (job_id,),
+            ).fetchall()
+        return [JobFileRecord.from_row(row) for row in rows]
+
     def mark_in_progress_as_failed(self, job_id: str, error_code: str) -> int:
         now = utc_now_iso()
         with self.database.connect() as connection:
@@ -566,14 +652,24 @@ class JobFilesRepository:
                 SET
                     copy_main_state = CASE WHEN copy_main_state = 'IN_PROGRESS' THEN 'FAILED' ELSE copy_main_state END,
                     copy_backup_state = CASE WHEN copy_backup_state = 'IN_PROGRESS' THEN 'FAILED' ELSE copy_backup_state END,
+                    verify_main_state = CASE WHEN verify_main_state = 'IN_PROGRESS' THEN 'FAILED' ELSE verify_main_state END,
+                    verify_backup_state = CASE WHEN verify_backup_state = 'IN_PROGRESS' THEN 'FAILED' ELSE verify_backup_state END,
                     error_code = CASE
-                        WHEN copy_main_state = 'IN_PROGRESS' OR copy_backup_state = 'IN_PROGRESS'
+                        WHEN copy_main_state = 'IN_PROGRESS'
+                          OR copy_backup_state = 'IN_PROGRESS'
+                          OR verify_main_state = 'IN_PROGRESS'
+                          OR verify_backup_state = 'IN_PROGRESS'
                         THEN ?
                         ELSE error_code
                     END,
                     updated_at = ?
                 WHERE job_id = ?
-                  AND (copy_main_state = 'IN_PROGRESS' OR copy_backup_state = 'IN_PROGRESS')
+                  AND (
+                    copy_main_state = 'IN_PROGRESS'
+                    OR copy_backup_state = 'IN_PROGRESS'
+                    OR verify_main_state = 'IN_PROGRESS'
+                    OR verify_backup_state = 'IN_PROGRESS'
+                  )
                 """,
                 (error_code, now, job_id),
             )

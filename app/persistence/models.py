@@ -111,3 +111,6 @@ class JobFileRecord:
     @classmethod
     def from_row(cls, row: Row) -> "JobFileRecord":
         return cls(**dict(row))
+
+    def metadata(self) -> dict[str, Any]:
+        return json.loads(self.metadata_json) if self.metadata_json else {}

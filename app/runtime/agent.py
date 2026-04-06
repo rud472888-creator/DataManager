@@ -13,10 +13,11 @@ from uuid import uuid4
 from app.config import Settings
 from app.persistence.models import JobFileRecord, JobRecord, VolumeRecord
 from app.persistence.repositories import PersistenceBundle
+from app.runtime.checksum import ChecksumMismatchError, sha256_file
 from app.runtime.commands import CommandResult
 from app.runtime.dependencies import probe_runtime_dependencies
 from app.runtime.events import EventBus, utc_now_iso
-from app.runtime.offload import build_project_tree, copy_file_with_progress
+from app.runtime.offload import build_project_tree, copy_file_with_progress, partial_copy_path
 from app.runtime.recovery import RecoveryManager
 from app.runtime.scan import scan_source_volume
 from app.runtime.scheduler import Scheduler
@@ -47,7 +48,7 @@ class RuntimeAgent:
         self.persistence = persistence
         self.event_bus = event_bus
         self.scheduler = Scheduler()
-        self.recovery = RecoveryManager(self.persistence.jobs)
+        self.recovery = RecoveryManager(self.persistence.jobs, self.persistence.job_files)
         self.volume_monitor = VolumeMonitor(self.persistence.volumes)
         self.dependencies = probe_runtime_dependencies()
         self.started_at = datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -67,17 +68,15 @@ class RuntimeAgent:
         }
         self.persistence.settings.ensure_defaults(defaults)
         recovered = self.recovery.recover_interrupted_jobs()
-        for job_id in recovered:
-            affected = self.persistence.job_files.mark_in_progress_as_failed(
-                job_id, "runtime_interrupted"
-            )
+        for item in recovered:
             await self.event_bus.publish(
                 "job.recovery_notice",
                 {
                     "message": "Job was active during previous shutdown and is now FAILED",
-                    "affected_job_files": affected,
+                    "affected_job_files": item["affected_job_files"],
+                    "removed_partial_files": item["removed_partial_files"],
                 },
-                job_id=job_id,
+                job_id=str(item["job_id"]),
             )
         self.refresh_volumes()
         self.refresh_scheduler()
@@ -115,7 +114,6 @@ class RuntimeAgent:
             "queue_depth": len(queued),
             "dependencies": self.dependencies,
             "stubbed_components": [
-                "checksum",
                 "metadata_parse",
                 "frame_capture",
                 "reports",
@@ -395,15 +393,19 @@ class RuntimeAgent:
             await self._transition_and_publish(
                 job_id=job_id,
                 new_state=JobState.VERIFYING,
-                current_step="verifying_stubbed",
-                message="Copy completed; verification stage entered but remains stubbed in A2",
+                current_step="verifying",
+                message="Copy completed; runtime started checksum verification",
                 origin="runtime.worker",
             )
+            verification = await self._verify_job(job_id, prepared)
+            if verification == "cancelled":
+                return
+            warning_reason = self._verification_warning_reason(job_id)
             await self._transition_and_publish(
                 job_id=job_id,
                 new_state=JobState.WARN,
-                current_step="copy_complete_pending_downstream",
-                message="Copy completed; verify/parse/capture/report remain stubbed in A2",
+                current_step="verified_pending_downstream",
+                message=warning_reason,
                 origin="runtime.worker",
             )
         except RuntimeAbort:
