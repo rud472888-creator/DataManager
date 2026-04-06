@@ -59,11 +59,26 @@ class ApiIntegrationTests(unittest.TestCase):
         self.client.__exit__(None, None, None)
         self.temp_dir.cleanup()
 
+    def test_remote_console_assets_and_boundary_copy(self) -> None:
+        index = self.client.get("/")
+        self.assertEqual(index.status_code, 200)
+        self.assertIn("remote control and monitoring shell only", index.text)
+        self.assertIn("runtime does the real filesystem and media work", index.text)
+
+        app_bundle = self.client.get("/static/app.js")
+        self.assertEqual(app_bundle.status_code, 200)
+        self.assertIn("reportSummary", app_bundle.text)
+        self.assertIn("/ws/events", self.client.get("/static/ws.js").text)
+        self.assertIn('operator_origin: "remote_web"', self.client.get("/static/api.js").text)
+
     def test_runtime_status_and_job_roundtrip(self) -> None:
         response = self.client.get("/api/runtime/status", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertNotIn("checksum", response.json()["stubbed_components"])
+        self.assertIn("reports", response.json()["stubbed_components"])
+        self.assertIn("dependencies", response.json())
+        self.assertIn("queue_depth", response.json())
 
         volumes = self.client.get("/api/volumes", headers=self.auth_headers)
         self.assertEqual(volumes.status_code, 200)
@@ -83,11 +98,19 @@ class ApiIntegrationTests(unittest.TestCase):
         job_id = created.json()["job_id"]
         terminal_job = self._wait_for_terminal_state(job_id)
         self.assertEqual(terminal_job["state"], "WARN")
+        self.assertEqual(terminal_job["current_step"], "copy_complete_pending_downstream")
         self.assertEqual(terminal_job["stats"]["processed_files"], 1)
         job_file = self.runtime.persistence.job_files.list_for_job(job_id)[0]
         self.assertEqual(job_file.verify_main_state, "VERIFIED")
         self.assertEqual(job_file.verify_backup_state, "SKIPPED")
         self.assertEqual(job_file.source_checksum_sha256, job_file.main_checksum_sha256)
+        self.assertIn("bytes_done", terminal_job["stats"])
+        self.assertIn("speed_mbps", terminal_job["stats"])
+        self.assertIn("eta_sec", terminal_job["stats"])
+        self.assertIn("message", terminal_job["stats"])
+        self.assertIn("warning_count", terminal_job)
+        self.assertIn("error_count", terminal_job)
+        self.assertEqual(terminal_job["operator_origin"], "remote_web")
 
         listed = self.client.get("/api/jobs", headers=self.auth_headers)
         self.assertEqual(listed.status_code, 200)
@@ -100,6 +123,7 @@ class ApiIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(command.status_code, 200)
         self.assertTrue(command.json()["accepted"])
+        self.assertIsNotNone(command.json()["persisted_event_id"])
 
     def test_websocket_receives_job_event(self) -> None:
         with self.client.websocket_connect("/ws/events", headers=self.auth_headers) as websocket:
@@ -115,14 +139,31 @@ class ApiIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(created.status_code, 201)
             seen_types: set[str] = set()
+            progress_event: dict[str, object] | None = None
             for _ in range(8):
                 event = websocket.receive_json()
+                self.assertIn("event_id", event)
+                self.assertIn("timestamp", event)
+                self.assertIn("payload", event)
                 seen_types.add(event["type"])
+                if event["type"] == "job.progress":
+                    progress_event = event
                 if "job.progress" in seen_types and "job.state_changed" in seen_types:
                     break
             self.assertIn("job.created", seen_types)
             self.assertIn("job.state_changed", seen_types)
             self.assertIn("job.progress", seen_types)
+            assert progress_event is not None
+            self.assertEqual(progress_event["job_id"], created.json()["job_id"])
+            self.assertIn("processed_files", progress_event["payload"])
+            self.assertIn("total_files", progress_event["payload"])
+            self.assertIn("bytes_done", progress_event["payload"])
+            self.assertIn("bytes_total", progress_event["payload"])
+            self.assertIn("speed_mbps", progress_event["payload"])
+            self.assertIn("eta_sec", progress_event["payload"])
+            self.assertIn("warnings", progress_event["payload"])
+            self.assertIn("errors", progress_event["payload"])
+            self.assertIn("message", progress_event["payload"])
 
     def test_cancel_running_job(self) -> None:
         large_source = self.source_root / "A002_C002.braw"

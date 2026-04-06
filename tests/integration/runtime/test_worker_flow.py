@@ -76,3 +76,34 @@ class WorkerFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job_file.source_checksum_sha256, job_file.main_checksum_sha256)
         copied = Path(self.temp_dir.name) / "dest" / "Project_Delta" / "01_footage" / "CARD_A" / "A001_C003.braw"
         self.assertTrue(copied.exists())
+
+    async def test_retry_command_creates_follow_up_job(self) -> None:
+        created = await self.runtime.create_job(
+            project_name="Project Retry",
+            source_volume_id=f"source::{self.source_root.resolve()}",
+            dest_main_id=f"destination::{(Path(self.temp_dir.name) / 'dest').resolve()}",
+            dest_backup_id=None,
+            policy={},
+            origin="remote_web",
+        )
+        job_id = created["job_id"]
+        for _ in range(100):
+            job = self.runtime.get_job(job_id)
+            assert job is not None
+            if job["state"] in {"WARN", "FAILED"}:
+                break
+            await asyncio.sleep(0.05)
+
+        result = await self.runtime.handle_command(
+            job_id=job_id,
+            command_name="retry",
+            origin="remote_web",
+        )
+        self.assertTrue(result.accepted)
+
+        jobs = self.runtime.list_jobs()
+        self.assertEqual(len(jobs), 2)
+        retry_job = next(item for item in jobs if item["job_id"] != job_id)
+        self.assertEqual(retry_job["retry_of_job_id"], job_id)
+        self.assertEqual(retry_job["state"], "QUEUED")
+        self.assertEqual(retry_job["operator_origin"], "remote_web")

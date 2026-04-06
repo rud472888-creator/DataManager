@@ -14,7 +14,8 @@ Completed:
 - real cancel handling during runtime execution
 - safe file-boundary pause and runtime-backed resume
 - recovery baseline for interrupted active jobs and in-progress file rows
-- minimal remote shell updates for status, volume, job, progress, and command observation
+- remote console updates for status, dependency/stub visibility, volume selection, queue/job progress, warnings/errors, report readiness messaging, and command observation
+- browser-authority guard coverage to keep the console REST/WebSocket-only and runtime-first
 - verified compile, unit/integration/system tests, and live local server/API checks
 
 Still stubbed after A2:

@@ -10,7 +10,7 @@ Footage Data Manager is a runtime-first macOS-local service with a browser remot
 - Job creation, listing, fetching, runtime-driven scan/prepare/copy, and command persistence are implemented.
 - SQLite bootstraps on first start.
 - Ordered runtime/job events are emitted over `/ws/events`.
-- The minimal browser shell can observe runtime status, volumes, jobs, progress, and command actions.
+- The browser console now surfaces runtime status, detected volumes, queue depth, job progress, warnings/errors, and stubbed report readiness without claiming local execution authority.
 
 ## Run Locally
 
@@ -48,7 +48,7 @@ curl -H "Authorization: Bearer $FDM_TOKEN" http://127.0.0.1:4482/api/runtime/sta
 http://127.0.0.1:4482/?token=change-me
 ```
 
-The browser shell is intentionally minimal and does not expose local file controls.
+The browser shell is intentionally remote-only: it submits `remote_web` commands over REST, listens to `/ws/events`, and does not expose local file controls or direct media access.
 
 ## Run Verification
 
@@ -67,4 +67,4 @@ The current repository can run its A2 checks with the standard library test runn
 - deeper retry/rebuild policy
 - full local operator panel
 
-The runtime scan, prepare, and copy path is now real. The remaining items stay explicitly stubbed so later milestones can plug into the same runtime-first boundaries without architecture drift.
+The runtime scan, prepare, and copy path is now real. The browser console is richer, but it still stays honest about the boundary: the runtime performs the work, and reports remain runtime-produced/stubbed until later milestones plug into the same contracts without architecture drift.

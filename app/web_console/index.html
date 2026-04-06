@@ -9,30 +9,74 @@
   <body>
     <main class="shell">
       <section class="card hero">
-        <p class="eyebrow">Remote Console Shell</p>
-        <h1>Footage Data Manager A2</h1>
-        <p class="copy">
-          This browser surface is a remote control and monitoring shell only.
-          All real filesystem and media work remains inside the local runtime.
-        </p>
-        <div class="token-row">
+        <div class="hero-copy">
+          <p class="eyebrow">Remote Console Shell</p>
+          <h1>Footage Data Manager A2</h1>
+          <p class="copy">
+            This browser surface is a remote control and monitoring shell only.
+            The runtime does the real filesystem and media work.
+          </p>
+          <p class="boundary-note">
+            Use detected source/destination volumes, REST commands, and WebSocket events only.
+            The browser never browses local disks, touches media files directly, or fabricates reports.
+          </p>
+        </div>
+        <div class="hero-controls">
           <label>
             Token
             <input id="tokenInput" type="password" value="change-me" />
           </label>
           <button id="reloadButton" type="button">Reconnect</button>
+          <div class="badge-row">
+            <span class="badge" id="connectionBadge" data-tone="neutral">disconnected</span>
+            <span class="badge" data-tone="neutral">browser authority: remote only</span>
+          </div>
         </div>
       </section>
-      <section class="card grid">
-        <h2>Runtime Status</h2>
-        <pre id="status">Loading...</pre>
-        <h2>Volumes</h2>
-        <pre id="volumes">Loading...</pre>
+
+      <p id="consoleMessage" class="console-message" hidden></p>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Runtime overview</p>
+            <h2>Status, dependencies, and stubbed output</h2>
+          </div>
+        </div>
+        <div id="runtimeSummary" class="summary-grid"></div>
+        <ul id="runtimeWarnings" class="notice-list"></ul>
       </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Runtime-detected volumes</p>
+            <h2>Choose from sources and approved destinations</h2>
+          </div>
+          <p class="section-copy">
+            The runtime discovers sources and enforces destination roots. The browser only selects from runtime-owned IDs.
+          </p>
+        </div>
+        <div class="volume-grid">
+          <div>
+            <h3>Source volumes</h3>
+            <ul id="sourceVolumeList" class="volume-list"></ul>
+          </div>
+          <div>
+            <h3>Destination volumes</h3>
+            <ul id="destinationVolumeList" class="volume-list"></ul>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <div class="stack">
           <div>
-            <h2>Create Job</h2>
+            <p class="eyebrow">Create runtime job</p>
+            <h2>Start a new offload</h2>
+            <p class="section-copy">
+              Job requests are submitted as <code>remote_web</code> commands and then executed by the local runtime.
+            </p>
             <form id="jobForm" class="form">
               <label>
                 Project name
@@ -54,14 +98,24 @@
             </form>
           </div>
           <div>
-            <h2>Jobs</h2>
+            <p class="eyebrow">Job queue</p>
+            <h2>Progress, warnings, and report readiness</h2>
             <div id="jobs" class="jobs"></div>
           </div>
         </div>
       </section>
+
       <section class="card">
-        <h2>Event Feed</h2>
-        <pre id="event">Waiting for websocket...</pre>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Event stream</p>
+            <h2>Recent runtime and job events</h2>
+          </div>
+          <p class="section-copy">
+            Events come from <code>/ws/events</code>. They reflect runtime-owned state and command outcomes.
+          </p>
+        </div>
+        <ul id="eventFeed" class="event-feed"></ul>
       </section>
     </main>
     <script src="/static/app.js" type="module"></script>
