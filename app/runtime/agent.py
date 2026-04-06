@@ -586,6 +586,18 @@ class RuntimeAgent:
 
             source_path = source_root / file_record.relative_path
             current_relpath = file_record.relative_path
+            main_destination = main_footage_root / current_relpath
+            backup_destination = backup_footage_root / current_relpath if backup_footage_root else None
+            file_metadata = {
+                **file_record.metadata(),
+                "source_path": str(source_path),
+                "main_destination": str(main_destination),
+                "backup_destination": str(backup_destination) if backup_destination else None,
+                "main_temp_path": str(partial_copy_path(main_destination)),
+                "backup_temp_path": (
+                    str(partial_copy_path(backup_destination)) if backup_destination else None
+                ),
+            }
             self.persistence.jobs.update_job_runtime_fields(
                 job_id=job_id,
                 current_step="copying",
@@ -595,6 +607,9 @@ class RuntimeAgent:
                 job_file_id=file_record.job_file_id,
                 main_state="IN_PROGRESS",
                 backup_state="IN_PROGRESS" if backup_footage_root is not None else "SKIPPED",
+                warning_code=None,
+                error_code=None,
+                metadata=file_metadata,
             )
 
             async def publish_progress(file_bytes_done: int, elapsed_sec: float) -> None:
@@ -627,7 +642,7 @@ class RuntimeAgent:
             try:
                 await copy_file_with_progress(
                     source_path=source_path,
-                    destination_path=main_footage_root / current_relpath,
+                    destination_path=main_destination,
                     progress_callback=publish_progress,
                     cancel_check=lambda: self._controls.get(job_id, JobControl()).cancel_requested,
                 )
@@ -656,7 +671,7 @@ class RuntimeAgent:
                 try:
                     await copy_file_with_progress(
                         source_path=source_path,
-                        destination_path=backup_footage_root / current_relpath,
+                        destination_path=backup_destination,
                         progress_callback=publish_progress,
                         cancel_check=lambda: self._controls.get(job_id, JobControl()).cancel_requested,
                     )
@@ -667,6 +682,7 @@ class RuntimeAgent:
                 except Exception as exc:
                     backup_state = "FAILED"
                     warning_count += 1
+                    backup_reason = "copy_backup_failed"
                     self.persistence.events.append_event(
                         job_id=job_id,
                         event_type="job.file_result",
@@ -674,8 +690,12 @@ class RuntimeAgent:
                         origin="runtime.copy",
                         message=f"Backup copy failed for {current_relpath}: {exc}",
                         payload={"relative_path": current_relpath},
-                        reason_code="copy_backup_failed",
+                        reason_code=backup_reason,
                     )
+                else:
+                    backup_reason = None
+            else:
+                backup_reason = None
 
             already_copied += 1
             bytes_done_total += file_record.size_bytes
@@ -683,11 +703,9 @@ class RuntimeAgent:
                 job_file_id=file_record.job_file_id,
                 main_state="COPIED",
                 backup_state=backup_state,
-                error_code="copy_backup_failed" if backup_state == "FAILED" else None,
-                metadata={
-                    "main_destination": str(main_footage_root / current_relpath),
-                    "backup_destination": str(backup_footage_root / current_relpath) if backup_footage_root else None,
-                },
+                warning_code=backup_reason,
+                error_code=None if backup_state != "FAILED" else backup_reason,
+                metadata=file_metadata,
             )
             self.persistence.events.append_event(
                 job_id=job_id,
