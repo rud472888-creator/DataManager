@@ -9,11 +9,7 @@ from app.runtime.state_machine import ACTIVE_STATES, JobState
 
 
 class RecoveryManager:
-    """Recovery shell for A1.
-
-    Active work is not resumed yet; in-flight jobs are normalized to FAILED with
-    an explicit runtime interruption reason.
-    """
+    """Durable restart recovery with explicit requeue/normalize rules."""
 
     def __init__(
         self,
@@ -38,26 +34,30 @@ class RecoveryManager:
                     message="Recovering interrupted active job",
                     payload={"previous_state": state.value},
                 )
+                target_state, recovery_message = self._recovery_target(state)
+                affected_job_files = 0
+                if target_state is JobState.FAILED:
+                    affected_job_files = self.job_files_repository.mark_in_progress_as_failed(
+                        job.job_id,
+                        "runtime_interrupted",
+                    )
                 self.jobs_repository.transition_job_state(
                     job_id=job.job_id,
-                    new_state=JobState.FAILED,
-                    current_step=job.current_step,
-                    message="Runtime restarted while job was active; marked FAILED for explicit retry",
+                    new_state=target_state,
+                    current_step="queued" if target_state is JobState.QUEUED else "paused" if target_state is JobState.PAUSED else job.current_step,
+                    message=recovery_message,
                     reason_code="runtime_interrupted",
                     origin="runtime.recovery",
-                )
-                affected_job_files = self.job_files_repository.mark_in_progress_as_failed(
-                    job.job_id,
-                    "runtime_interrupted",
                 )
                 self.jobs_repository.events_repository.append_event(
                     job_id=job.job_id,
                     event_type="job.recovery_completed",
                     level="WARN",
                     origin="runtime.recovery",
-                    message="Interrupted job normalized to FAILED",
+                    message=recovery_message,
                     payload={
                         "reason_code": "runtime_interrupted",
+                        "recovered_state": target_state.value,
                         "affected_job_files": affected_job_files,
                         "removed_partial_files": removed_partial_files,
                     },
@@ -65,11 +65,20 @@ class RecoveryManager:
                 recovered.append(
                     {
                         "job_id": job.job_id,
+                        "recovered_state": target_state.value,
                         "affected_job_files": affected_job_files,
                         "removed_partial_files": removed_partial_files,
                     }
                 )
         return recovered
+
+    @staticmethod
+    def _recovery_target(state: JobState) -> tuple[JobState, str]:
+        if state in {JobState.SCANNING, JobState.PREPARING}:
+            return JobState.QUEUED, "Runtime restarted before data transfer; job requeued safely"
+        if state is JobState.PAUSING:
+            return JobState.PAUSED, "Runtime restarted during pause transition; job preserved as PAUSED"
+        return JobState.FAILED, "Runtime restarted while job was active; marked FAILED for explicit retry"
 
     @staticmethod
     def _remove_partial_files(job_files: list[JobFileRecord]) -> int:

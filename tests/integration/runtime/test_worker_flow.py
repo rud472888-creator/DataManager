@@ -7,12 +7,15 @@ from pathlib import Path
 
 from app.config import Settings
 from app.main import build_runtime
+from tests.support.fake_braw_adapters import fake_adapter_environment
 
 
 class WorkerFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         temp_path = Path(self.temp_dir.name)
+        self.adapter_env = fake_adapter_environment(temp_path)
+        self.adapter_env.__enter__()
         self.source_root = temp_path / "source_card"
         self.source_root.mkdir(parents=True, exist_ok=True)
         (self.source_root / "A001_C003.braw").write_bytes(b"z" * (1024 * 256))
@@ -49,6 +52,7 @@ class WorkerFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self.runtime.shutdown()
+        self.adapter_env.__exit__(None, None, None)
         self.temp_dir.cleanup()
 
     async def test_worker_scans_and_copies(self) -> None:
@@ -75,7 +79,7 @@ class WorkerFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(job_file.source_checksum_sha256)
         self.assertEqual(job_file.source_checksum_sha256, job_file.main_checksum_sha256)
         self.assertIn(job_file.parse_state, {"PARSED", "CAPABILITY_GATED"})
-        self.assertEqual(job_file.capture_state, "CAPABILITY_GATED")
+        self.assertEqual(job_file.capture_state, "CAPTURED")
         self.assertEqual(len(self.runtime.list_reports(job_id)), 4)
         self.assertEqual(len(self.runtime.list_clips(job_id=job_id)), 1)
         copied = Path(self.temp_dir.name) / "dest" / "Project_Delta" / "01_footage" / "CARD_A" / "A001_C003.braw"

@@ -17,12 +17,15 @@ from app.persistence.migrations import apply_migrations
 from app.persistence.repositories import PersistenceBundle
 from app.runtime.agent import RuntimeAgent
 from app.runtime.events import EventBus
+from tests.support.fake_braw_adapters import fake_adapter_environment
 
 
 class ReportApiIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         temp_path = Path(self.temp_dir.name)
+        self.adapter_env = fake_adapter_environment(temp_path)
+        self.adapter_env.__enter__()
         settings = Settings(
             host="127.0.0.1",
             port=4482,
@@ -63,6 +66,7 @@ class ReportApiIntegrationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.__exit__(None, None, None)
+        self.adapter_env.__exit__(None, None, None)
         self.temp_dir.cleanup()
 
     def test_reports_are_generated_and_downloadable_by_report_id(self) -> None:

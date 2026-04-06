@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -106,11 +107,81 @@ class BrawMetadataAdapter:
         return payload
 
 
+@dataclass(slots=True)
+class BrawFrameCaptureAdapter:
+    command: tuple[str, ...] | None = None
+    resolution_reason: str = "No BRAW frame capture adapter configured"
+
+    @classmethod
+    def from_environment(cls) -> "BrawFrameCaptureAdapter":
+        raw = os.getenv("FDM_BRAW_FRAME_CAPTURE_COMMAND", "").strip()
+        if not raw:
+            return cls()
+        parts = shlex.split(raw)
+        if not parts:
+            return cls()
+        resolved = shutil.which(parts[0])
+        if resolved is None:
+            return cls(command=None, resolution_reason=f"Configured command not found: {parts[0]}")
+        return cls(command=(resolved, *parts[1:]), resolution_reason=f"Using configured capture adapter: {resolved}")
+
+    def is_available(self) -> bool:
+        return self.command is not None
+
+    def describe(self) -> dict[str, object]:
+        return {
+            "available": self.is_available(),
+            "reason": self.resolution_reason,
+            "command": list(self.command) if self.command is not None else None,
+        }
+
+    def capture(self, file_path: Path, *, output_dir: Path, indices: list[int]) -> list[Path]:
+        if self.command is None:
+            raise RuntimeError(self.resolution_reason)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        completed = subprocess.run(
+            [*self.command, str(file_path), str(output_dir), ",".join(str(index) for index in indices)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            stderr = completed.stderr.strip() or "capture adapter returned non-zero exit status"
+            raise RuntimeError(stderr)
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("capture adapter output was not valid JSON") from exc
+        if not isinstance(payload, list):
+            raise RuntimeError("capture adapter output must be a JSON array")
+        resolved_paths: list[Path] = []
+        for item in payload:
+            raw_path = item["path"] if isinstance(item, dict) else item
+            if not isinstance(raw_path, str):
+                raise RuntimeError("capture adapter items must be strings or {'path': str}")
+            candidate = Path(raw_path)
+            candidate = candidate if candidate.is_absolute() else (output_dir / candidate)
+            candidate = candidate.resolve()
+            if not candidate.exists():
+                raise RuntimeError(f"capture adapter returned missing frame: {candidate}")
+            try:
+                candidate.relative_to(output_dir.resolve())
+            except ValueError as exc:
+                raise RuntimeError("capture adapter returned a path outside the output directory") from exc
+            resolved_paths.append(candidate)
+        return resolved_paths
+
+
 class BrawParser(BaseParser):
     """BRAW-first parser with an honest capability-gated metadata adapter."""
 
-    def __init__(self, adapter: BrawMetadataAdapter | None = None) -> None:
+    def __init__(
+        self,
+        adapter: BrawMetadataAdapter | None = None,
+        capture_adapter: BrawFrameCaptureAdapter | None = None,
+    ) -> None:
         self._adapter = adapter or BrawMetadataAdapter.from_environment()
+        self._capture_adapter = capture_adapter or BrawFrameCaptureAdapter.from_environment()
 
     def probe(self, file_path: Path) -> ProbeResult:
         supported = file_path.suffix.lower() == ".braw"
@@ -124,7 +195,7 @@ class BrawParser(BaseParser):
         return ParserCapabilities(
             metadata=self._adapter.is_available(),
             integrity=False,
-            frame_capture=False,
+            frame_capture=self._capture_adapter.is_available(),
         )
 
     def parse_metadata(self, file_path: Path) -> ClipMetadata:
@@ -180,13 +251,20 @@ class BrawParser(BaseParser):
         raise NotImplementedError("BRAW integrity checks are stubbed in A1")
 
     def capture_frames(self, file_path: Path, indices: list[int]) -> list[Path]:
-        raise NotImplementedError("BRAW frame capture is stubbed in A1")
+        if not self.probe(file_path).supported:
+            raise ValueError(f"Unsupported file type for BRAW parser: {file_path}")
+        output_dir = Path(tempfile.mkdtemp(prefix="fdm-braw-capture-"))
+        try:
+            return self._capture_adapter.capture(file_path, output_dir=output_dir, indices=indices)
+        except Exception:
+            shutil.rmtree(output_dir, ignore_errors=True)
+            raise
 
     def get_format_name(self) -> str:
         return "BRAW"
 
     def get_version(self) -> str:
-        return "a3-braw-metadata-adapter"
+        return "a4-braw-runtime-adapters"
 
     @staticmethod
     def _normalize_lens(raw_payload: dict[str, Any]) -> dict[str, Any] | None:

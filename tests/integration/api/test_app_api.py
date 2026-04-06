@@ -9,12 +9,15 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from tests.support.fake_braw_adapters import fake_adapter_environment
 
 
 class ApiIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         temp_path = Path(self.temp_dir.name)
+        self.adapter_env = fake_adapter_environment(temp_path)
+        self.adapter_env.__enter__()
         settings = Settings(
             host="127.0.0.1",
             port=4482,
@@ -57,6 +60,7 @@ class ApiIntegrationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.__exit__(None, None, None)
+        self.adapter_env.__exit__(None, None, None)
         self.temp_dir.cleanup()
 
     def test_remote_console_assets_and_boundary_copy(self) -> None:
@@ -77,8 +81,10 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(response.json()["status"], "ok")
         self.assertNotIn("checksum", response.json()["stubbed_components"])
         self.assertNotIn("reports", response.json()["stubbed_components"])
+        self.assertNotIn("frame_capture", response.json()["stubbed_components"])
         self.assertIn("dependencies", response.json())
         self.assertIn("queue_depth", response.json())
+        self.assertEqual(response.json()["dependencies"]["braw_metadata_adapter"]["status"], "ok")
 
         volumes = self.client.get("/api/volumes", headers=self.auth_headers)
         self.assertEqual(volumes.status_code, 200)
@@ -105,7 +111,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(job_file.verify_backup_state, "SKIPPED")
         self.assertEqual(job_file.source_checksum_sha256, job_file.main_checksum_sha256)
         self.assertIn(job_file.parse_state, {"PARSED", "CAPABILITY_GATED"})
-        self.assertEqual(job_file.capture_state, "CAPABILITY_GATED")
+        self.assertEqual(job_file.capture_state, "CAPTURED")
         self.assertIn("bytes_done", terminal_job["stats"])
         self.assertIn("speed_mbps", terminal_job["stats"])
         self.assertIn("eta_sec", terminal_job["stats"])
@@ -199,6 +205,59 @@ class ApiIntegrationTests(unittest.TestCase):
         terminal = self._wait_for_state(job_id, {"CANCELLED", "WARN", "FAILED"})
         self.assertEqual(terminal["state"], "CANCELLED")
 
+    def test_job_logs_and_settings_routes(self) -> None:
+        created = self.client.post(
+            "/api/jobs",
+            headers=self.auth_headers,
+            json={
+                "project_name": "Project Logs",
+                "source_volume_id": f"source::{self.source_root.resolve()}",
+                "dest_main_id": self.destination_volume_id,
+                "policy": {"stub_mode": True},
+            },
+        )
+        self.assertEqual(created.status_code, 201)
+        job_id = created.json()["job_id"]
+        self._wait_for_terminal_state(job_id)
+
+        logs = self.client.get(f"/api/jobs/{job_id}/logs", headers=self.auth_headers)
+        self.assertEqual(logs.status_code, 200)
+        self.assertGreaterEqual(len(logs.json()["items"]), 1)
+        self.assertIn("event_type", logs.json()["items"][0])
+
+        settings = self.client.get("/api/settings", headers=self.auth_headers)
+        self.assertEqual(settings.status_code, 200)
+        self.assertIn("allowed_destination_roots", settings.json())
+        patched = self.client.patch(
+            "/api/settings",
+            headers=self.auth_headers,
+            json={
+                "allowed_destination_roots": [str((Path(self.temp_dir.name) / "alt-dest").resolve())],
+                "poll_interval_sec": 2,
+            },
+        )
+        self.assertEqual(patched.status_code, 200)
+        self.assertEqual(patched.json()["poll_interval_sec"], 2)
+
+    def test_browser_disconnect_does_not_stop_runtime(self) -> None:
+        large_source = self.source_root / "A003_C003.braw"
+        large_source.write_bytes(b"z" * (1024 * 1024 * 32))
+        with self.client.websocket_connect("/ws/events", headers=self.auth_headers) as websocket:
+            created = self.client.post(
+                "/api/jobs",
+                headers=self.auth_headers,
+                json={
+                    "project_name": "Project Disconnect",
+                    "source_volume_id": f"source::{self.source_root.resolve()}",
+                    "dest_main_id": self.destination_volume_id,
+                    "policy": {"stub_mode": True},
+                },
+            )
+            self.assertEqual(created.status_code, 201)
+            websocket.receive_json()
+        terminal = self._wait_for_terminal_state(created.json()["job_id"], timeout=10.0)
+        self.assertIn(terminal["state"], {"COMPLETED", "WARN"})
+
     def _wait_for_state(self, job_id: str, states: set[str], timeout: float = 5.0) -> dict[str, object]:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -209,5 +268,5 @@ class ApiIntegrationTests(unittest.TestCase):
             time.sleep(0.05)
         raise AssertionError(f"Job {job_id} did not reach one of {states}")
 
-    def _wait_for_terminal_state(self, job_id: str) -> dict[str, object]:
-        return self._wait_for_state(job_id, {"COMPLETED", "WARN", "FAILED", "CANCELLED"})
+    def _wait_for_terminal_state(self, job_id: str, timeout: float = 5.0) -> dict[str, object]:
+        return self._wait_for_state(job_id, {"COMPLETED", "WARN", "FAILED", "CANCELLED"}, timeout=timeout)

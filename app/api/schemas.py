@@ -29,3 +29,9 @@ class RuntimeStatusResponse(BaseModel):
     queue_depth: int
     dependencies: dict[str, Any]
     stubbed_components: list[str]
+
+
+class SettingsPatchRequest(BaseModel):
+    allowed_destination_roots: list[str] | None = None
+    poll_interval_sec: int | None = Field(default=None, ge=1, le=3600)
+    token: str | None = Field(default=None, min_length=1)

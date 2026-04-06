@@ -83,3 +83,59 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(updated_copy.copy_main_state, "FAILED")
         self.assertEqual(updated_copy.copy_backup_state, "FAILED")
         self.assertEqual(updated_verify.verify_main_state, "FAILED")
+
+    def test_recovery_requeues_safe_pre_copy_states(self) -> None:
+        for state, expected_state in ((JobState.SCANNING, "QUEUED"), (JobState.PREPARING, "QUEUED"), (JobState.PAUSING, "PAUSED")):
+            job_id = f"JOB-{state.value}"
+            self.persistence.jobs.create_job(
+                {
+                    "job_id": job_id,
+                    "retry_of_job_id": None,
+                    "project_name": "Project Recovery",
+                    "source_volume_id": "source::/Volumes/CARD_A",
+                    "dest_main_id": "destination::/tmp/DEST",
+                    "dest_backup_id": None,
+                    "state": state.value,
+                    "current_step": state.value.lower(),
+                    "resume_step": None,
+                    "operator_origin": "test",
+                    "policy_json": {},
+                    "stats_json": {"stubbed": False},
+                    "warning_count": 0,
+                    "error_count": 0,
+                    "current_file_relpath": None,
+                }
+            )
+            recovered = RecoveryManager(self.persistence.jobs, self.persistence.job_files).recover_interrupted_jobs()
+            self.assertEqual(len(recovered), 1)
+            self.assertEqual(self.persistence.jobs.get_job(job_id).state, expected_state)
+
+    def test_recovery_leaves_persisted_terminal_and_paused_states_unchanged(self) -> None:
+        for state in ("QUEUED", "PAUSED", "WARN", "FAILED"):
+            self.persistence.jobs.create_job(
+                {
+                    "job_id": f"JOB-{state}",
+                    "retry_of_job_id": None,
+                    "project_name": "Project Recovery",
+                    "source_volume_id": "source::/Volumes/CARD_A",
+                    "dest_main_id": "destination::/tmp/DEST",
+                    "dest_backup_id": None,
+                    "state": state,
+                    "current_step": state.lower(),
+                    "resume_step": None,
+                    "operator_origin": "test",
+                    "policy_json": {},
+                    "stats_json": {"stubbed": False},
+                    "warning_count": 0,
+                    "error_count": 0,
+                    "current_file_relpath": None,
+                }
+            )
+
+        recovered = RecoveryManager(self.persistence.jobs, self.persistence.job_files).recover_interrupted_jobs()
+
+        self.assertEqual(recovered, [])
+        self.assertEqual(self.persistence.jobs.get_job("JOB-QUEUED").state, "QUEUED")
+        self.assertEqual(self.persistence.jobs.get_job("JOB-PAUSED").state, "PAUSED")
+        self.assertEqual(self.persistence.jobs.get_job("JOB-WARN").state, "WARN")
+        self.assertEqual(self.persistence.jobs.get_job("JOB-FAILED").state, "FAILED")

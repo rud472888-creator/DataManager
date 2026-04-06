@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import textwrap
 import zipfile
 from dataclasses import dataclass
@@ -9,7 +11,6 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from app.config import Settings
-from app.parsers.registry import get_registered_parsers
 from app.persistence.manifests import write_manifest
 from app.persistence.models import JobFileRecord, JobRecord
 from app.persistence.repositories import PersistenceBundle
@@ -65,11 +66,10 @@ def ensure_reports_for_job(*, job_id: str, settings: Settings, persistence: Pers
 
     checksum_lines = _build_checksum_lines(job=job, job_files=job_files)
     metadata_rows = _build_metadata_rows(job_files)
-    image_lines = _build_image_report_lines(job_files)
+    captured_frames = _collect_captured_frames(job_files)
 
     _write_text_pdf(checksum_pdf_path, title="Checksum Verification Report", lines=checksum_lines)
     _write_metadata_xlsx(metadata_xlsx_path, metadata_rows)
-    _write_text_pdf(image_pdf_path, title="Image Contact Report", lines=image_lines)
 
     artifacts = [
         _artifact_for_path(
@@ -81,19 +81,23 @@ def ensure_reports_for_job(*, job_id: str, settings: Settings, persistence: Pers
         ),
         _artifact_for_path(
             job_id=job_id,
-            report_type="image_pdf",
-            path=image_pdf_path,
-            base_root=roots.base_root,
-            created_at=created_at,
-        ),
-        _artifact_for_path(
-            job_id=job_id,
             report_type="metadata_xlsx",
             path=metadata_xlsx_path,
             base_root=roots.base_root,
             created_at=created_at,
         ),
     ]
+    if captured_frames:
+        _write_image_pdf(image_pdf_path, frames=captured_frames)
+        artifacts.append(
+            _artifact_for_path(
+                job_id=job_id,
+                report_type="image_pdf",
+                path=image_pdf_path,
+                base_root=roots.base_root,
+                created_at=created_at,
+            )
+        )
 
     manifest_preview = ReportArtifact(
         report_id=f"{job_id}:manifest_json",
@@ -341,26 +345,30 @@ def _build_checksum_lines(*, job: JobRecord, job_files: list[JobFileRecord]) -> 
     return lines
 
 
-def _build_image_report_lines(job_files: list[JobFileRecord]) -> list[str]:
-    frame_capture_enabled = any(parser.capabilities().frame_capture for parser in get_registered_parsers())
-    if frame_capture_enabled:
-        return [
-            "Image report scaffolding",
-            "",
-            "Frame capture capability is available, but runtime preview embedding is not implemented in this slice.",
-            "This placeholder PDF exists so the report contract stays explicit instead of silently pretending previews succeeded.",
-        ]
-    lines = [
-        "Image report scaffold",
-        "",
-        "Frame capture is currently blocked by parser capabilities.",
-        "The runtime is intentionally generating a truthful placeholder PDF instead of a fake image contact sheet.",
-        "",
-    ]
-    if job_files:
-        lines.append("Affected files:")
-        lines.extend(f"- {record.relative_path}" for record in job_files[:25])
-    return lines
+def _collect_captured_frames(job_files: list[JobFileRecord]) -> list[dict[str, Any]]:
+    frames: list[dict[str, Any]] = []
+    for record in job_files:
+        metadata = _parse_metadata_json(record.metadata_json)
+        capture = metadata.get("capture")
+        if not isinstance(capture, dict):
+            continue
+        capture_frames = capture.get("frames")
+        if not isinstance(capture_frames, list):
+            continue
+        for item in capture_frames:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            if not isinstance(path, str):
+                continue
+            frames.append(
+                {
+                    "path": Path(path),
+                    "label": str(item.get("label") or item.get("index") or record.relative_path),
+                    "relative_path": record.relative_path,
+                }
+            )
+    return frames
 
 
 def _build_metadata_rows(job_files: list[JobFileRecord]) -> list[list[object]]:
@@ -562,6 +570,164 @@ def _write_text_pdf(path: Path, *, title: str, lines: list[str]) -> None:
         ).encode("utf-8")
     )
     path.write_bytes(bytes(body))
+
+
+def _write_image_pdf(path: Path, *, frames: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not frames:
+        raise ValueError("Cannot build image PDF without captured frames")
+
+    objects: list[bytes] = []
+    page_object_numbers: list[int] = []
+    content_object_numbers: list[int] = []
+    image_object_numbers: list[int] = []
+    next_object_number = 4
+    for _ in frames:
+        page_object_numbers.append(next_object_number)
+        content_object_numbers.append(next_object_number + 1)
+        image_object_numbers.append(next_object_number + 2)
+        next_object_number += 3
+
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+    kids = " ".join(f"{number} 0 R" for number in page_object_numbers)
+    objects.append(
+        f"<< /Type /Pages /Count {len(page_object_numbers)} /Kids [{kids}] >>".encode("utf-8")
+    )
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    for page_number, frame in enumerate(frames, start=1):
+        image_bytes = frame["path"].read_bytes()
+        width, height = _image_dimensions(frame["path"], image_bytes)
+        page_object = page_object_numbers[page_number - 1]
+        content_object = content_object_numbers[page_number - 1]
+        image_object = image_object_numbers[page_number - 1]
+        content = _image_pdf_content_stream(
+            label=f"{frame['relative_path']} [{frame['label']}]",
+            width=width,
+            height=height,
+        )
+        objects.append(
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                f"/Resources << /Font << /F1 3 0 R >> /XObject << /Im1 {image_object} 0 R >> >> "
+                f"/Contents {content_object} 0 R >>"
+            ).encode("utf-8")
+        )
+        objects.append(
+            f"<< /Length {len(content)} >>\nstream\n".encode("utf-8") + content + b"\nendstream"
+        )
+        objects.append(
+            (
+                f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} "
+                f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode "
+                f"/Length {len(image_bytes)} >>\nstream\n"
+            ).encode("utf-8")
+            + image_bytes
+            + b"\nendstream"
+        )
+
+    header = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+    body = bytearray(header)
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(body))
+        body.extend(f"{index} 0 obj\n".encode("utf-8"))
+        body.extend(obj)
+        body.extend(b"\nendobj\n")
+    xref_offset = len(body)
+    body.extend(f"xref\n0 {len(offsets)}\n".encode("utf-8"))
+    body.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        body.extend(f"{offset:010d} 00000 n \n".encode("utf-8"))
+    body.extend(
+        (
+            f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode("utf-8")
+    )
+    path.write_bytes(bytes(body))
+
+
+def _image_pdf_content_stream(*, label: str, width: int, height: int) -> bytes:
+    page_width = 612
+    page_height = 792
+    max_width = 512
+    max_height = 640
+    scale = min(max_width / width, max_height / height, 1.0)
+    draw_width = width * scale
+    draw_height = height * scale
+    x = (page_width - draw_width) / 2
+    y = 96
+    text_y = y + draw_height + 24
+    commands = [
+        "BT",
+        "/F1 12 Tf",
+        f"50 {text_y:.2f} Td",
+        f"({ _pdf_escape(label) }) Tj",
+        "ET",
+        "q",
+        f"{draw_width:.2f} 0 0 {draw_height:.2f} {x:.2f} {y:.2f} cm",
+        "/Im1 Do",
+        "Q",
+    ]
+    return "\n".join(commands).encode("utf-8")
+
+
+def _jpeg_dimensions(payload: bytes) -> tuple[int, int]:
+    if not payload.startswith(b"\xff\xd8"):
+        raise ValueError("Image report currently requires JPEG capture outputs")
+    index = 2
+    while index < len(payload):
+        while index < len(payload) and payload[index] == 0xFF:
+            index += 1
+        if index >= len(payload):
+            break
+        marker = payload[index]
+        index += 1
+        if marker in {0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
+            continue
+        if index + 2 > len(payload):
+            break
+        segment_length = int.from_bytes(payload[index : index + 2], "big")
+        if segment_length < 2 or index + segment_length > len(payload):
+            break
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            if index + 7 > len(payload):
+                break
+            height = int.from_bytes(payload[index + 3 : index + 5], "big")
+            width = int.from_bytes(payload[index + 5 : index + 7], "big")
+            return width, height
+        index += segment_length
+    raise ValueError("Unable to determine JPEG dimensions")
+
+
+def _image_dimensions(path: Path, payload: bytes) -> tuple[int, int]:
+    sips = shutil.which("sips")
+    if sips is not None:
+        completed = subprocess.run(
+            [sips, "-g", "pixelWidth", "-g", "pixelHeight", str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode == 0:
+            width = None
+            height = None
+            for line in completed.stdout.splitlines():
+                if "pixelWidth:" in line:
+                    raw = line.split(":", 1)[1].strip()
+                    if raw.isdigit():
+                        width = int(raw)
+                if "pixelHeight:" in line:
+                    raw = line.split(":", 1)[1].strip()
+                    if raw.isdigit():
+                        height = int(raw)
+            if width and height:
+                return width, height
+    try:
+        return _jpeg_dimensions(payload)
+    except ValueError:
+        return (1, 1)
 
 
 def _pdf_content_stream(lines: list[str]) -> bytes:

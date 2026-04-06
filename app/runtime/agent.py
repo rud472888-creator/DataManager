@@ -15,6 +15,7 @@ from app.persistence.models import JobFileRecord, JobRecord, VolumeRecord
 from app.persistence.repositories import PersistenceBundle
 from app.runtime.checksum import ChecksumMismatchError, sha256_file
 from app.runtime.commands import CommandResult
+from app.runtime.capture import FrameCaptureService
 from app.runtime.dependencies import probe_runtime_dependencies
 from app.runtime.events import EventBus, utc_now_iso
 from app.runtime.offload import build_project_tree, copy_file_with_progress, partial_copy_path
@@ -54,6 +55,7 @@ class RuntimeAgent:
         self.volume_monitor = VolumeMonitor(self.persistence.volumes)
         self.dependencies = probe_runtime_dependencies()
         self.parse_service = MetadataParseService(self.persistence.database)
+        self.capture_service = FrameCaptureService(self.persistence.database)
         self.started_at = datetime.now(UTC).replace(microsecond=0).isoformat()
         self._stop_event = asyncio.Event()
         self._scheduler_task: asyncio.Task[None] | None = None
@@ -75,9 +77,10 @@ class RuntimeAgent:
             await self.event_bus.publish(
                 "job.recovery_notice",
                 {
-                    "message": "Job was active during previous shutdown and is now FAILED",
+                    "message": f"Job recovery completed; resulting state is {item['recovered_state']}",
                     "affected_job_files": item["affected_job_files"],
                     "removed_partial_files": item["removed_partial_files"],
+                    "recovered_state": item["recovered_state"],
                 },
                 job_id=str(item["job_id"]),
             )
@@ -107,6 +110,9 @@ class RuntimeAgent:
     def runtime_status_payload(self) -> dict[str, object]:
         jobs = self.persistence.jobs.list_jobs()
         queued = [job for job in jobs if job.state == JobState.QUEUED.value]
+        stubbed_components: list[str] = []
+        if self.dependencies["frame_capture"]["status"] != "ok":
+            stubbed_components.append("frame_capture")
         return {
             "app_name": self.settings.app_name,
             "app_version": self.settings.app_version,
@@ -116,9 +122,7 @@ class RuntimeAgent:
             "active_job_id": self.scheduler.active_job_id,
             "queue_depth": len(queued),
             "dependencies": self.dependencies,
-            "stubbed_components": [
-                "frame_capture",
-            ],
+            "stubbed_components": stubbed_components,
         }
 
     def list_volumes(self) -> list[dict[str, object]]:
@@ -192,6 +196,68 @@ class RuntimeAgent:
                 }
             )
         return items
+
+    def _merged_stats(self, job_id: str, updates: dict[str, object]) -> dict[str, object]:
+        job = self.persistence.jobs.get_job(job_id)
+        base = job.stats() if job is not None else {}
+        return {**base, **updates}
+
+    def list_job_logs(self, job_id: str, *, limit: int = 200, offset: int = 0) -> list[dict[str, object]]:
+        if self.persistence.jobs.get_job(job_id) is None:
+            raise KeyError(job_id)
+        events = self.persistence.events.list_events_for_job(job_id)
+        window = events[offset : offset + limit]
+        return [
+            {
+                "event_id": event.event_id,
+                "job_id": event.job_id,
+                "event_type": event.event_type,
+                "level": event.level,
+                "from_state": event.from_state,
+                "to_state": event.to_state,
+                "command_name": event.command_name,
+                "command_status": event.command_status,
+                "origin": event.origin,
+                "reason_code": event.reason_code,
+                "message": event.message,
+                "payload": event.payload(),
+                "created_at": event.created_at,
+            }
+            for event in window
+        ]
+
+    def get_settings_summary(self) -> dict[str, object]:
+        allowed_roots = self.persistence.settings.get_json(
+            "runtime.allowed_destination_roots",
+            list(self.settings.allowed_destination_roots),
+        )
+        poll_interval = self.persistence.settings.get_json("runtime.poll_interval_sec", 1)
+        return {
+            "allowed_destination_roots": allowed_roots,
+            "poll_interval_sec": poll_interval,
+            "reports_output_root": str(self.settings.reports_dir),
+            "token_configured": bool(self.settings.token),
+            "dependencies": self.dependencies,
+        }
+
+    def patch_settings(
+        self,
+        *,
+        allowed_destination_roots: list[str] | None = None,
+        poll_interval_sec: int | None = None,
+        token: str | None = None,
+    ) -> dict[str, object]:
+        if allowed_destination_roots is not None:
+            cleaned = [str(Path(item).expanduser().resolve()) for item in allowed_destination_roots]
+            self.persistence.settings.set_json("runtime.allowed_destination_roots", cleaned)
+            object.__setattr__(self.settings, "allowed_destination_roots", tuple(cleaned))
+            self.refresh_volumes()
+        if poll_interval_sec is not None:
+            self.persistence.settings.set_json("runtime.poll_interval_sec", poll_interval_sec)
+        if token is not None:
+            self.persistence.settings.set_json("auth.token_hash", self.persistence.settings.hash_token(token))
+            object.__setattr__(self.settings, "token", token)
+        return self.get_settings_summary()
 
     def _validate_source_and_destinations(
         self,
@@ -442,7 +508,7 @@ class RuntimeAgent:
                 job_id=job_id,
                 new_state=JobState.CAPTURING,
                 current_step="capturing",
-                message="Metadata parsing completed; frame capture remains capability-gated",
+                message="Metadata parsing completed; runtime started frame capture",
                 origin="runtime.worker",
             )
             await self._capture_job(job_id)
@@ -686,7 +752,7 @@ class RuntimeAgent:
                 }
                 self.persistence.jobs.update_job_runtime_fields(
                     job_id=job_id,
-                    stats=payload,
+                    stats=self._merged_stats(job_id, payload),
                     current_step="copying",
                     current_file_relpath=current_relpath,
                     warning_count=warning_count,
@@ -789,7 +855,7 @@ class RuntimeAgent:
             }
             self.persistence.jobs.update_job_runtime_fields(
                 job_id=job_id,
-                stats=payload,
+                stats=self._merged_stats(job_id, payload),
                 current_step="copying",
                 current_file_relpath=current_relpath,
                 warning_count=warning_count,
@@ -1051,7 +1117,7 @@ class RuntimeAgent:
             }
             self.persistence.jobs.update_job_runtime_fields(
                 job_id=job_id,
-                stats=payload,
+                stats=self._merged_stats(job_id, payload),
                 current_step="verifying",
                 current_file_relpath=current_relpath,
                 warning_count=warning_count,
@@ -1107,7 +1173,7 @@ class RuntimeAgent:
             }
             self.persistence.jobs.update_job_runtime_fields(
                 job_id=job_id,
-                stats=payload,
+                stats=self._merged_stats(job_id, payload),
                 current_step="parsing",
                 current_file_relpath=file_record.relative_path,
                 warning_count=warning_count,
@@ -1118,18 +1184,52 @@ class RuntimeAgent:
     async def _capture_job(self, job_id: str) -> None:
         files = self.persistence.job_files.list_for_job(job_id)
         total_files = len(files)
+        warning_count = self.persistence.jobs.get_job(job_id).warning_count if self.persistence.jobs.get_job(job_id) else 0
+        error_count = self.persistence.jobs.get_job(job_id).error_count if self.persistence.jobs.get_job(job_id) else 0
+        job = self.persistence.jobs.get_job(job_id)
+        assert job is not None
+        stats = job.stats()
+        main_paths = stats.get("main_paths")
+        assert isinstance(main_paths, dict)
+        captures_root = Path(str(main_paths["reports_root"])) / "captures"
+        source_root = Path(self.persistence.volumes.get_volume(job.source_volume_id).mount_path)
         for index, file_record in enumerate(files, start=1):
-            self.persistence.job_files.update_capture_state(
-                job_file_id=file_record.job_file_id,
-                capture_state="CAPABILITY_GATED",
-                metadata={
-                    **file_record.metadata(),
-                    "capture": {
-                        "status": "capability_gated",
-                        "reason": "Frame capture is not implemented in the current milestone",
-                    },
-                },
-            )
+            source_path = source_root / file_record.relative_path
+            capture_output_root = captures_root / Path(file_record.relative_path).stem
+            try:
+                result = self.capture_service.capture_file(
+                    job_file_id=file_record.job_file_id,
+                    relative_path=file_record.relative_path,
+                    source_path=str(source_path),
+                    output_root=capture_output_root,
+                    indices=[0, 50, 100],
+                )
+                if result["capture_state"] != "CAPTURED":
+                    warning_count += 1
+                    self.persistence.events.append_event(
+                        job_id=job_id,
+                        event_type="job.file_result",
+                        level="WARN",
+                        origin="runtime.capture",
+                        message=f"Frame capture capability-gated for {file_record.relative_path}",
+                        payload={"relative_path": file_record.relative_path},
+                        reason_code="frame_capture_unavailable",
+                    )
+            except Exception as exc:
+                warning_count += 1
+                self.capture_service.mark_capture_failure(
+                    job_file_id=file_record.job_file_id,
+                    reason=str(exc),
+                )
+                self.persistence.events.append_event(
+                    job_id=job_id,
+                    event_type="job.file_result",
+                    level="WARN",
+                    origin="runtime.capture",
+                    message=f"Frame capture warning for {file_record.relative_path}: {exc}",
+                    payload={"relative_path": file_record.relative_path},
+                    reason_code="frame_capture_failed",
+                )
             payload = {
                 "state": JobState.CAPTURING.value,
                 "current_file": file_record.relative_path,
@@ -1139,15 +1239,17 @@ class RuntimeAgent:
                 "bytes_total": total_files,
                 "speed_mbps": 0.0,
                 "eta_sec": 0 if index >= total_files else None,
-                "warnings": self.persistence.jobs.get_job(job_id).warning_count if self.persistence.jobs.get_job(job_id) else 0,
-                "errors": self.persistence.jobs.get_job(job_id).error_count if self.persistence.jobs.get_job(job_id) else 0,
-                "message": "Frame capture capability-gated",
+                "warnings": warning_count,
+                "errors": error_count,
+                "message": "Frame capture processed",
             }
             self.persistence.jobs.update_job_runtime_fields(
                 job_id=job_id,
-                stats=payload,
+                stats=self._merged_stats(job_id, payload),
                 current_step="capturing",
                 current_file_relpath=file_record.relative_path,
+                warning_count=warning_count,
+                error_count=error_count,
             )
             await self.event_bus.publish("job.progress", payload, job_id=job_id)
 
@@ -1173,7 +1275,7 @@ class RuntimeAgent:
         }
         self.persistence.jobs.update_job_runtime_fields(
             job_id=job_id,
-            stats=payload,
+            stats=self._merged_stats(job_id, payload),
             current_step="reporting",
             current_file_relpath="",
         )
@@ -1193,6 +1295,8 @@ class RuntimeAgent:
             for record in files
         ):
             return "Runtime pipeline completed with backup warnings"
+        if any(record.capture_state in {"CAPABILITY_GATED", "FAILED"} for record in files):
+            return "Runtime pipeline completed with frame capture warnings"
         if any(record.parse_state == "FAILED" for record in files):
             return "Runtime pipeline completed with metadata parsing warnings"
         return "Runtime pipeline completed successfully"

@@ -54,8 +54,8 @@ TERMINAL_STATES = {
 
 ALLOWED_TRANSITIONS = {
     JobState.QUEUED: {JobState.SCANNING, JobState.CANCELLED},
-    JobState.SCANNING: {JobState.PREPARING, JobState.FAILED, JobState.CANCELLED},
-    JobState.PREPARING: {JobState.COPYING, JobState.FAILED, JobState.CANCELLED},
+    JobState.SCANNING: {JobState.PREPARING, JobState.QUEUED, JobState.FAILED, JobState.CANCELLED},
+    JobState.PREPARING: {JobState.COPYING, JobState.QUEUED, JobState.FAILED, JobState.CANCELLED},
     JobState.COPYING: {JobState.PAUSING, JobState.VERIFYING, JobState.FAILED, JobState.CANCELLED},
     JobState.PAUSING: {JobState.PAUSED, JobState.FAILED},
     JobState.PAUSED: {JobState.COPYING, JobState.CANCELLED},
