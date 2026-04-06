@@ -8,6 +8,11 @@ from typing import Awaitable, Callable
 
 
 ProgressCallback = Callable[[int, float], Awaitable[None]]
+PARTIAL_SUFFIX = ".fdm-partial"
+
+
+def partial_copy_path(destination_path: Path) -> Path:
+    return destination_path.with_name(destination_path.name + PARTIAL_SUFFIX)
 
 
 def build_project_tree(destination_root: Path, project_name: str, source_label: str) -> dict[str, Path]:
@@ -37,7 +42,9 @@ async def copy_file_with_progress(
     cancel_check: Callable[[], bool] | None = None,
 ) -> None:
     destination_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = destination_path.with_name(destination_path.name + ".fdm-partial")
+    temp_path = partial_copy_path(destination_path)
+    if temp_path.exists():
+        temp_path.unlink()
     bytes_done = 0
     start = time.monotonic()
     try:
