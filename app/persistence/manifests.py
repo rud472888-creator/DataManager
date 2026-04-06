@@ -6,6 +6,6 @@ from typing import Any
 
 
 def write_manifest(path: Path, payload: dict[str, Any]) -> None:
-    """Stub-safe manifest writer for later media/report phases."""
+    """Write a deterministic manifest payload with a trailing newline."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
