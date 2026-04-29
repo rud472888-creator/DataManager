@@ -15,7 +15,6 @@ def test_real_braw_adapter_defaults_to_truthful_unavailable(monkeypatch) -> None
     check = adapter.check_capability()
 
     assert capabilities.metadata is CapabilityState.UNAVAILABLE
-    assert capabilities.frame_capture is CapabilityState.UNAVAILABLE
     assert "not configured" in capabilities.reason
     assert check.capabilities.metadata is CapabilityState.UNAVAILABLE
 
@@ -36,14 +35,11 @@ def test_mock_braw_parser_is_explicit_and_deterministic(tmp_path) -> None:
 
     metadata = parser.parse_metadata(sample)
     integrity = parser.check_integrity(sample)
-    frames = parser.capture_frames(sample, tmp_path / "frames", [0, 12])
 
     assert parser.capabilities().is_mock is True
     assert metadata.is_mock is True
     assert metadata.metadata["mock"] is True
     assert integrity.state is IntegrityState.OK
-    assert [frame.index for frame in frames] == [0, 12]
-    assert all(frame.is_mock for frame in frames)
 
 
 def test_registry_keeps_mock_opt_in() -> None:
@@ -72,7 +68,7 @@ def test_future_format_adapters_are_truthfully_unavailable(tmp_path) -> None:
     assert arriraw.probe(arri_sample).supported is True
     assert arriraw.probe(tmp_path / "ALEXA_C002.mxf").supported is True
     assert r3d.capabilities().metadata is CapabilityState.UNAVAILABLE
-    assert arriraw.capabilities().frame_capture is CapabilityState.UNAVAILABLE
+    assert arriraw.capabilities().metadata is CapabilityState.UNAVAILABLE
 
 
 def test_adapter_can_report_partial_when_command_configured(monkeypatch) -> None:
@@ -81,10 +77,9 @@ def test_adapter_can_report_partial_when_command_configured(monkeypatch) -> None
     capabilities = BrawAdapter.from_environment().capabilities()
 
     assert capabilities.metadata is CapabilityState.PARTIAL
-    assert capabilities.frame_capture is CapabilityState.UNAVAILABLE
 
 
-def test_adapter_accepts_real_command_json_without_frame_claim(tmp_path) -> None:
+def test_adapter_accepts_real_command_json(tmp_path) -> None:
     command = tmp_path / "metadata_command.py"
     command.write_text(
         "#!/usr/bin/env python3\n"
@@ -97,7 +92,6 @@ def test_adapter_accepts_real_command_json_without_frame_claim(tmp_path) -> None
     check = BrawAdapter(str(command)).check_capability(sample)
 
     assert check.capabilities.metadata is CapabilityState.AVAILABLE
-    assert check.capabilities.frame_capture is CapabilityState.UNAVAILABLE
     assert check.metadata is not None
     assert check.metadata.is_mock is False
-    assert json.loads(json.dumps(check.as_dict()))["frames"] == []
+    assert "frames" not in json.loads(json.dumps(check.as_dict()))

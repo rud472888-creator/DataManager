@@ -15,5 +15,5 @@ Smoke:
   curl -fsS http://127.0.0.1:8000/api/runtime/status
 
 Note:
-  Real BRAW SDK/frame capture is unavailable until configured and validated.
+  Frame capture is handled by a separate program; this app runs clone/checksum jobs only.
 MSG

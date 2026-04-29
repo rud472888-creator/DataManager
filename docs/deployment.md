@@ -14,7 +14,6 @@ Working root: `~/desktop/datamanager`.
    - `FDM_DATABASE_PATH`
    - `FDM_DEV_SOURCE_ROOT` for local fixture/dev runs
    - `FDM_ALLOWED_DEST_ROOTS`
-   - `FDM_BRAW_METADATA_COMMAND` when a real adapter exists
 4. Apply migrations.
 5. Start Uvicorn on the field Mac.
 6. Open the remote console from a trusted browser/LAN client.
@@ -26,10 +25,9 @@ Python package build is validated with `python -m build`.
 macOS app bundle/signing is not complete. Blockers:
 
 - Signing identity/certificate not provided.
-- Real BRAW/R3D/ARRIRAW SDK or binary packaging requirements unknown.
 - Real mixed-format sample media validation not available.
 
-Next concrete packaging step: choose a macOS packaging tool and verify how format adapter commands/SDKs may be distributed under their licenses.
+Next concrete packaging step: choose a macOS packaging tool and validate the clone-only runtime on the target field Mac.
 
 ## Security Posture
 

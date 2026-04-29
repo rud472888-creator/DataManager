@@ -49,7 +49,7 @@ The root source-of-truth files are compatibility mirrors of the docs copies.
 - `scripts/smoke_release.sh`
 - `scripts/demo_run.sh`
 - `scripts/apply_migrations.py`
-- `scripts/check_braw_capability.py`
+- `scripts/check_clone_capability.py`
 - `scripts/generate_fixture_media.py`
 
 ## Validation Evidence
@@ -62,16 +62,14 @@ The final smoke script validates:
 - Ruff format check
 - MyPy
 - Pytest
-- BRAW capability truthfulness
+- clone capability truthfulness
 - Python package build
 
-Latest full test result: 52 tests passed.
+Latest full test result: 55 tests passed.
 
 ## Known External Blockers
 
-- Real BRAW SDK command is not configured.
 - Real `.braw` sample media is not available.
-- Real frame capture is unavailable.
 - macOS signing/notarization credentials are not available.
 
 ## Next Work Entry Point

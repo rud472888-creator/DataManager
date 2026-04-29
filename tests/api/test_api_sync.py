@@ -168,8 +168,8 @@ def test_job_create_runs_pipeline_and_persists_reports(monkeypatch, tmp_path) ->
         "R001_C001.r3d",
     }
     assert {file["status"] for file in manifest["files"]} == {"verified"}
-    assert manifest["clips"] == []
-    assert {"checksum_pdf", "metadata_xlsx", "manifest_json", "image_pdf"} <= report_types
+    assert "clips" not in manifest
+    assert report_types == {"checksum_pdf", "manifest_json"}
 
 
 def test_settings_patch_is_token_protected_and_filtered(monkeypatch, tmp_path) -> None:

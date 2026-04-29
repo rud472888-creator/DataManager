@@ -11,12 +11,6 @@ VolumeStatus = Literal["available", "missing", "busy", "read-only", "low-space"]
 
 
 class CapabilityPayload(TypedDict):
-    braw_metadata: CapabilityState
-    braw_frame_capture: CapabilityState
-    r3d_metadata: CapabilityState
-    r3d_frame_capture: CapabilityState
-    arriraw_metadata: CapabilityState
-    arriraw_frame_capture: CapabilityState
     checksum: CapabilityState
     supported_offload_formats: list[str]
     supported_offload_suffixes: list[str]

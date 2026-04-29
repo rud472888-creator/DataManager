@@ -33,7 +33,6 @@ class ProbeResult:
 class ParserCapabilities:
     metadata: CapabilityState
     integrity: CapabilityState
-    frame_capture: CapabilityState
     reason: str
     is_mock: bool = False
 
@@ -41,7 +40,6 @@ class ParserCapabilities:
         return {
             "metadata": self.metadata.value,
             "integrity": self.integrity.value,
-            "frame_capture": self.frame_capture.value,
             "reason": self.reason,
             "is_mock": self.is_mock,
         }
@@ -63,13 +61,6 @@ class IntegrityResult:
 
 
 @dataclass(frozen=True)
-class CapturedFrame:
-    index: int
-    path: Path
-    is_mock: bool = False
-
-
-@dataclass(frozen=True)
 class CapabilityCheck:
     parser_name: str
     capabilities: ParserCapabilities
@@ -77,7 +68,6 @@ class CapabilityCheck:
     probe: ProbeResult | None = None
     metadata: ClipMetadata | None = None
     integrity: IntegrityResult | None = None
-    frames: list[CapturedFrame] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -87,8 +77,4 @@ class CapabilityCheck:
             "probe": self.probe.__dict__ if self.probe else None,
             "metadata": self.metadata.__dict__ if self.metadata else None,
             "integrity": self.integrity.__dict__ if self.integrity else None,
-            "frames": [
-                {"index": frame.index, "path": str(frame.path), "is_mock": frame.is_mock}
-                for frame in self.frames
-            ],
         }

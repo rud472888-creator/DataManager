@@ -6,11 +6,11 @@ Working root: `~/desktop/datamanager`.
 
 The system has three boundaries:
 
-- macOS local runtime: the only executor for volume detection, scans, copy/offload, checksum, parser execution, frame capture, report generation, SQLite writes, local logs, temp files, and recovery.
+- macOS local runtime: the only executor for volume detection, scans, copy/offload, checksum verification, clone report generation, SQLite writes, local logs, temp files, and recovery.
 - API/sync layer: REST and WebSocket transport, auth, request validation, command dispatch, and state/event delivery.
 - Remote web console: browser UI that creates jobs, observes runtime state, reads logs/reports, and submits commands through REST/WebSocket only.
 
-The web console must not directly access local files, invoke OS file pickers for source/destination selection, copy media, calculate checksums, run parsers, run external binaries, or write arbitrary paths.
+The web console must not directly access local files, invoke OS file pickers for source/destination selection, copy media, calculate checksums, run parsers, capture frames, run external binaries, or write arbitrary paths.
 
 ## Milestones And Gates
 
@@ -23,7 +23,7 @@ The web console must not directly access local files, invoke OS file pickers for
 | 4.1 | Sprint 0 BRAW capability gate | Contract, implementation, evaluator PASS |
 | 4.2 | Sprint 1 state machine and persistence | Contract, implementation, evaluator PASS |
 | 4.3 | Sprint 2 offload and checksum pipeline | Contract, implementation, evaluator PASS |
-| 4.4 | Sprint 3 parsing, frame capture, reports | Contract, implementation, evaluator PASS |
+| 4.4 | Sprint 3 clone reports | Contract, implementation, evaluator PASS |
 | 4.5 | Sprint 4 API, WebSocket, command layer | Contract, implementation, evaluator PASS |
 | 4.6 | Sprint 5 remote web console UX | Contract, implementation, evaluator PASS |
 | 4.7 | Sprint 6 recovery, resilience, local panel | Contract, implementation, evaluator PASS |
@@ -39,7 +39,7 @@ Do not advance before the active stage gate is green.
 - The web console consumes REST and WebSocket only.
 - One BRAW card set can be offloaded to main and backup destinations.
 - File-level checksum results are persisted.
-- Metadata and frame capture outputs are included in reports when capability is available.
+- Checksum and manifest outputs are included in clone reports.
 - Browser UI shows progress, speed, ETA, errors, logs, and report links in real time.
 - Pause, resume, cancel, and retry follow the state machine.
 - Browser disconnect does not stop runtime work.
@@ -53,12 +53,11 @@ Do not advance before the active stage gate is green.
 | Runtime | Unit/integration tests for jobs, queue, state transitions, copy/checksum, recovery |
 | API | REST and WebSocket tests for auth, commands, state, logs, reports |
 | UI | Playwright smoke and responsive checks |
-| Reports | Tests for manifest, PDF/XLSX generation, and failure reporting |
+| Reports | Tests for manifest, checksum PDF generation, and failure reporting |
 | Quality | Ruff, format check, MyPy, Pytest, build, scenario validation |
 
 ## Risks
 
-- BRAW SDK, sample media, and licensing may be unavailable.
 - macOS `/Volumes` behavior and permissions require careful runtime-only handling.
 - Partial-copy recovery can corrupt state if checkpointing is weak.
 - Large media may expose throughput and checksum bottlenecks.
@@ -69,7 +68,7 @@ Do not advance before the active stage gate is green.
 
 - Use canonical job states first; represent device-error details with reason/error codes unless a later contract justifies a new state.
 - Use a static web console served by FastAPI unless later validation proves a frontend build tool is necessary.
-- Use mocks or capability-unavailable states for BRAW integrations when real SDK/media are absent.
+- Frame capture and deeper media processing are separate-program responsibilities, not v1 clone-app responsibilities.
 
 ## Request Flow Contract
 
@@ -79,7 +78,7 @@ Browser to API to runtime to persistence to WebSocket to browser:
 2. The web console submits job creation or command requests through REST using runtime-provided IDs, not raw arbitrary local paths.
 3. The API authenticates and validates the request shape, then forwards an accepted request to the local runtime service boundary.
 4. The local runtime checks state, policy, and file authority before it mutates anything.
-5. The local runtime writes jobs, events, file results, clips, reports, settings, and volumes to SQLite.
+5. The local runtime writes jobs, events, file results, reports, settings, and volumes to SQLite.
 6. The API/WebSocket layer publishes the persisted state/event update.
 7. The browser updates UI from REST snapshots and WebSocket deltas only.
 
@@ -87,9 +86,9 @@ Browser to API to runtime to persistence to WebSocket to browser:
 
 | Module | Owns | Must not own |
 |---|---|---|
-| `app/runtime/` | state machine, scheduler, scan, copy, checksum, parser/capture orchestration, recovery decisions | HTTP response formatting or browser UI state |
+| `app/runtime/` | state machine, scheduler, scan, copy, checksum, clone report generation, recovery decisions | HTTP response formatting or browser UI state |
 | `app/persistence/` | SQLite connections, schema/migrations, repositories, manifest writes requested by runtime | job policy decisions or direct web console access |
-| `app/parsers/` | runtime-only parser protocol, BRAW capability adapter, mock fixtures | REST endpoints or browser execution |
+| `app/parsers/` | legacy parser protocol and adapter tests; not part of the production clone pipeline | REST endpoints, browser execution, or frame capture |
 | `app/api/` | auth, REST, WebSocket, schemas, command request validation, static console serving | direct copy/checksum/parser execution |
 | `app/web_console/` | rendering REST snapshots, WebSocket events, command forms, responsive UI state | local file access, OS pickers, checksum, parser calls, arbitrary path writes |
 | `app/local_panel/` | optional minimal local status/emergency view | full duplicate product surface or separate executor |
@@ -105,9 +104,7 @@ Browser to API to runtime to persistence to WebSocket to browser:
 | `COPYING` | `PAUSING`, `VERIFYING`, `WARN`, `FAILED`, `CANCELLED` | `pause` and `cancel` accepted; `resume`, `retry` rejected |
 | `PAUSING` | `PAUSED`, `FAILED` | commands rejected until stable |
 | `PAUSED` | `COPYING`, `CANCELLED` | `resume` and `cancel` accepted; `pause`, `retry` rejected |
-| `VERIFYING` | `PARSING`, `WARN`, `FAILED`, `CANCELLED` | `cancel` accepted; others rejected |
-| `PARSING` | `CAPTURING`, `REPORTING`, `WARN`, `FAILED`, `CANCELLED` | `cancel` accepted; others rejected |
-| `CAPTURING` | `REPORTING`, `WARN`, `FAILED`, `CANCELLED` | `cancel` accepted; others rejected |
+| `VERIFYING` | `REPORTING`, `WARN`, `FAILED`, `CANCELLED` | `cancel` accepted; others rejected |
 | `REPORTING` | `COMPLETED`, `WARN`, `FAILED`, `CANCELLED` | `cancel` accepted; others rejected |
 | `WARN` | `QUEUED`, `REPORTING`, `COMPLETED`, `FAILED` | `retry` accepted; `cancel` rejected after terminal artifact finalization |
 | `FAILED` | `QUEUED` | `retry` accepted when policy and inputs are still available |
@@ -140,7 +137,7 @@ Out-of-scope: offload pipeline and report generation.
 
 Touched modules/files: `app/parsers/`, `app/runtime/dependencies.py`, `app/api/routes_runtime.py`, `tests/support/`, `docs/qa/sprint-0-braw-gate-*.md`.
 
-Acceptance criteria: real SDK absence is reported as unavailable/unknown; mock fixtures cover metadata/capture contract; web console cannot call parser directly.
+Acceptance criteria: legacy parser checks remain truthful; web console cannot call parser code directly.
 
 Validation commands: baseline quality commands, parser unit tests, capability API tests, boundary static test.
 
@@ -174,15 +171,15 @@ Validation commands: baseline quality commands, offload integration tests, no-we
 
 Rollback/risk notes: tests use temporary directories; never touch arbitrary real volumes in automated tests.
 
-### Milestone 4.4 - Sprint 3 Parsing, Capture, And Reports
+### Milestone 4.4 - Sprint 3 Clone Reports
 
-Scope: metadata parse orchestration, frame capture gate, checksum PDF, image PDF, metadata XLSX, manifest relationships.
+Scope: checksum PDF and manifest relationships from persisted clone results.
 
 Out-of-scope: new browser features beyond report listing contracts.
 
-Touched modules/files: `app/runtime/parse.py`, `app/runtime/capture.py`, `app/runtime/reports.py`, `app/persistence/manifests.py`, `tests/integration/runtime/`.
+Touched modules/files: `app/runtime/reports.py`, `tests/integration/runtime/`.
 
-Acceptance criteria: report artifacts are generated from persisted runtime data; unavailable capture is honestly represented.
+Acceptance criteria: report artifacts are generated from persisted runtime clone data.
 
 Validation commands: baseline quality commands plus artifact content tests.
 

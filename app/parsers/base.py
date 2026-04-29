@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Protocol
 
 from app.parsers.types import (
-    CapturedFrame,
     ClipMetadata,
     IntegrityResult,
     ParserCapabilities,
@@ -34,11 +33,3 @@ class Parser(Protocol):
 
     def check_integrity(self, file_path: Path) -> IntegrityResult:
         """Check media integrity from a local runtime path."""
-
-    def capture_frames(
-        self,
-        file_path: Path,
-        output_dir: Path,
-        indices: list[int],
-    ) -> list[CapturedFrame]:
-        """Capture frames from a local runtime path."""

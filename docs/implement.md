@@ -6,8 +6,16 @@ Working root: `~/desktop/datamanager`.
 
 - Current stage: Stage 7 - Release Wrap-Up
 - Latest result: PASS
-- Blocker: none for release wrap-up; production-grade real BRAW SDK/frame capture and macOS signed packaging remain documented external blockers
+- Blocker: none for release wrap-up; macOS signed packaging remains a documented external blocker
 - Exact next action: handoff-ready; next work should start from `docs/known-issues.md`
+
+## 2026-04-30 Clone-only scope update
+
+- Product scope changed to clone-only; frame capture and deeper image processing now belong to a separate program.
+- Production job execution now runs scan -> clone/copy -> checksum verification -> clone reports only.
+- Runtime status capabilities now expose checksum and supported offload formats/suffixes, not parser or frame-capture capability.
+- Clone reports now generate checksum PDF and manifest JSON only; image PDF and metadata XLSX are no longer production artifacts.
+- `scripts/check_clone_capability.py` is the release smoke capability proof command.
 
 ## Resume Evidence
 
@@ -577,7 +585,7 @@ Hardening summary:
 
 Known residual risks:
 
-- Real BRAW SDK/sample validation remains unavailable.
+- Real sample media validation remains unavailable.
 - Active interrupted copy repair remains conservative.
 - WebSocket broadcast fanout remains basic.
 - macOS packaging/signing remains future release-prep work.
@@ -587,7 +595,7 @@ Validation evidence:
 - `.venv/bin/ruff check .` passed
 - `.venv/bin/ruff format --check .` passed
 - `.venv/bin/mypy app` passed
-- `.venv/bin/pytest -q` passed with 52 tests
+- `.venv/bin/pytest -q` passed with 55 tests
 - `.venv/bin/python -m build` passed
 
 Stage 6 verdict: PASS.
@@ -606,9 +614,7 @@ Release-wrap summary:
 
 Final known issues:
 
-- Real BRAW SDK command is not configured.
 - Real `.braw` sample media is not available.
-- Real frame capture is unavailable.
 - macOS signing/notarization credentials are not available.
 - WebSocket broadcast fanout is basic.
 - Active interrupted copy repair remains conservative.
@@ -621,7 +627,7 @@ Validation evidence:
   - Ruff check
   - Ruff format check
   - MyPy
-  - Pytest, 52 tests
+  - Pytest, 55 tests
   - BRAW capability check, truthful unavailable
   - Python package build
 - `scripts/demo_run.sh` passed.

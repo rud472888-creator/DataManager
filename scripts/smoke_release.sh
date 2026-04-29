@@ -7,5 +7,5 @@ set -eu
 .venv/bin/ruff format --check .
 .venv/bin/mypy app
 .venv/bin/pytest -q
-.venv/bin/python scripts/check_braw_capability.py
+.venv/bin/python scripts/check_clone_capability.py
 .venv/bin/python -m build

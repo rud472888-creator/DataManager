@@ -35,12 +35,6 @@ def test_runtime_status_payload(client: TestClient) -> None:
     assert payload["platform"] == "macOS"
     assert payload["active_job_id"] is None
     assert payload["capabilities"]["checksum"] == "available"
-    assert payload["capabilities"]["braw_metadata"] == "unavailable"
-    assert payload["capabilities"]["braw_frame_capture"] == "unavailable"
-    assert payload["capabilities"]["r3d_metadata"] == "unavailable"
-    assert payload["capabilities"]["r3d_frame_capture"] == "unavailable"
-    assert payload["capabilities"]["arriraw_metadata"] == "unavailable"
-    assert payload["capabilities"]["arriraw_frame_capture"] == "unavailable"
     assert payload["capabilities"]["supported_offload_formats"] == ["BRAW", "R3D", "ARRIRAW"]
     assert payload["capabilities"]["supported_offload_suffixes"] == [
         ".ari",
@@ -49,6 +43,7 @@ def test_runtime_status_payload(client: TestClient) -> None:
         ".r3d",
     ]
     assert payload["messages"][0] == "local runtime online"
+    assert "clone" in payload["messages"][1]
 
 
 def test_runtime_status_reports_persisted_active_job(client: TestClient) -> None:

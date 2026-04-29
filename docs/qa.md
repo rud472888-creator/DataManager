@@ -60,7 +60,7 @@ Stage 1 must also add and run a Python Playwright smoke test for the home page a
 | Sprint 0 BRAW gate | parser protocol tests, mock adapter tests, capability API tests, no fake real-BRAW PASS |
 | Sprint 1 state/persistence | state transition matrix tests, command matrix tests, repository tests, recovery candidate tests |
 | Sprint 2 offload/checksum | temp-directory scan/copy/verify integration, mismatch failure tests, no arbitrary browser path tests |
-| Sprint 3 parse/capture/reports | metadata fixture tests, capture unavailable tests, manifest/PDF/XLSX artifact tests |
+| Sprint 3 clone reports | checksum PDF and manifest artifact tests |
 | Sprint 4 API/WebSocket | auth negative tests, invalid command tests, WebSocket event shape tests, reconnect snapshot tests |
 | Sprint 5 remote console | Playwright desktop/mobile smoke, command UI state tests, no file input/path write affordance scan |
 | Sprint 6 recovery/local panel | restart recovery scenarios, browser reconnect test, local panel boundary test |
@@ -74,7 +74,7 @@ Stage 1 must also add and run a Python Playwright smoke test for the home page a
 - Browser reconnect receives REST snapshot and WebSocket updates.
 - Invalid `resume` from `COPYING` returns rejection and persists a command event.
 - Missing token on command routes returns unauthorized.
-- BRAW SDK unavailable reports truthful capability state.
+- Clone capability status reports checksum and supported offload formats truthfully.
 - Source removed during scan/copy creates a failure or paused/error reason without corrupting persisted state.
 - Main success with backup failure records `WARN` and report details.
 - Checksum mismatch records file-level failure and blocks false completion.
@@ -125,7 +125,7 @@ Before release wrap-up, run:
 .venv/bin/ruff format --check .
 .venv/bin/mypy app
 .venv/bin/pytest -q
-.venv/bin/python scripts/check_braw_capability.py
+.venv/bin/python scripts/check_clone_capability.py
 .venv/bin/python -m build
 ```
 
@@ -150,4 +150,4 @@ Sprint stages with A. Contract, B. Implementation, and C. Evaluator must produce
 
 ## Truthful Blockers
 
-If BRAW SDK, sample media, packaging credentials, signing identity, or external binaries are unavailable, record the blocker honestly in `docs/implement.md` and the relevant evaluator/QA document. Do not create fake media support, fake reports, or fake PASS evidence.
+If sample media, packaging credentials, signing identity, or external binaries are unavailable, record the blocker honestly in `docs/implement.md` and the relevant evaluator/QA document. Do not create fake media support, fake reports, or fake PASS evidence.

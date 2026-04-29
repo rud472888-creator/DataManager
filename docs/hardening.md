@@ -16,12 +16,12 @@ Working root: `~/desktop/datamanager`.
 - `.venv/bin/ruff check .` PASS
 - `.venv/bin/ruff format --check .` PASS
 - `.venv/bin/mypy app` PASS
-- `.venv/bin/pytest -q` PASS, 52 tests
+- `.venv/bin/pytest -q` PASS, 55 tests
 - `.venv/bin/python -m build` PASS
 
 ## Remaining Risks
 
-- Real BRAW SDK/sample validation is still unavailable.
+- Real sample media validation is still unavailable.
 - Active interrupted copy repair is conservative and not a full resume engine.
 - WebSocket broadcast fanout is still basic.
 - macOS packaging/signing is not done.

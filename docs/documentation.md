@@ -4,9 +4,9 @@ Working root: `~/desktop/datamanager`.
 
 ## Overview
 
-Footage Data Manager is a macOS local runtime with a remote web console. The local runtime performs real file work: volume detection, scan, copy/offload, checksum verification, parser execution, frame capture, report generation, SQLite persistence, logs, and recovery. The web console is a REST and WebSocket client for job creation, monitoring, logs, reports, and command dispatch only.
+Footage Data Manager is a macOS local runtime with a remote web console. The local runtime performs clone work: volume detection, scan, copy/offload, checksum verification, clone report generation, SQLite persistence, logs, and recovery. The web console is a REST and WebSocket client for job creation, monitoring, logs, reports, and command dispatch only.
 
-The architecture boundary is fixed: local runtime executes, web console commands and observes. No documentation or implementation should imply that the browser performs local file access, copy, checksum, parser execution, or arbitrary path writes.
+The architecture boundary is fixed: local runtime executes, web console commands and observes. No documentation or implementation should imply that the browser performs local file access, copy, checksum, parser execution, frame capture, or arbitrary path writes.
 
 ## Recommended Reading Order
 
@@ -77,7 +77,7 @@ The architecture boundary is fixed: local runtime executes, web console commands
 - `app/parsers/base.py`: runtime-only parser protocol.
 - `app/parsers/braw_parser.py`: real BRAW adapter boundary plus explicit mock parser.
 - `app/parsers/registry.py`: production parser registry with mock parser opt-in.
-- `scripts/check_braw_capability.py`: JSON capability proof command.
+- `scripts/check_clone_capability.py`: JSON clone capability proof command.
 - `tests/parsers/`: parser contract, mock behavior, unavailable real adapter, and registry tests.
 
 ## Sprint 1 Runtime State Machine & Persistence
@@ -104,16 +104,14 @@ The architecture boundary is fixed: local runtime executes, web console commands
 - `tests/runtime/test_offload.py`: offload success and failure scenario tests.
 - `tests/persistence/test_file_results.py`: file-level result persistence tests.
 
-## Sprint 3 Parsing, Frame Capture & Reports
+## Sprint 3 Clone Reports
 
-- `docs/sprints/sprint-3-parse-capture-reports.md`: Sprint contract, artifact behavior, implementation notes, validation record.
-- `docs/qa/sprint-3-parse-capture-reports-eval.md`: evaluator scores and PASS verdict.
-- `app/runtime/parse.py`: runtime parser integration and clip persistence.
-- `app/runtime/capture.py`: frame capture integration and unavailable behavior.
-- `app/runtime/reports.py`: checksum PDF, metadata XLSX, manifest JSON, and conditional image PDF generation.
-- `app/persistence/models.py`: `Clip` and `Report` models.
-- `app/persistence/repositories.py`: `ClipRepository` and `ReportRepository`.
-- `tests/runtime/test_parse_capture_reports.py`: parser/report artifact tests.
+- `docs/sprints/sprint-3-parse-capture-reports.md`: historical sprint contract; current product scope keeps only clone reports.
+- `docs/qa/sprint-3-parse-capture-reports-eval.md`: historical evaluator record.
+- `app/runtime/reports.py`: checksum PDF and manifest JSON generation from persisted clone results.
+- `app/persistence/models.py`: `Report` model; `Clip` remains legacy schema surface for compatibility.
+- `app/persistence/repositories.py`: `ReportRepository`; `ClipRepository` remains legacy schema surface for compatibility.
+- `tests/runtime/test_parse_capture_reports.py`: parser legacy tests and clone report artifact tests.
 
 ## Sprint 4 API / WebSocket / Command Layer
 

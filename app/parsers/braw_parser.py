@@ -11,7 +11,6 @@ from app.parsers.errors import ParserUnavailableError
 from app.parsers.types import (
     CapabilityCheck,
     CapabilityState,
-    CapturedFrame,
     ClipMetadata,
     IntegrityResult,
     IntegrityState,
@@ -28,8 +27,8 @@ class BrawAdapter:
     """Real BRAW adapter boundary.
 
     The command contract is intentionally narrow: when configured, the metadata
-    command receives a sample path and must print JSON. Frame capture remains
-    unavailable until a separate capture command is configured by a later stage.
+    command receives a sample path and must print JSON. Frame capture is outside
+    this clone app and belongs to the separate capture tool.
     """
 
     def __init__(self, metadata_command: str | None = None) -> None:
@@ -50,13 +49,11 @@ class BrawAdapter:
             return ParserCapabilities(
                 metadata=CapabilityState.UNAVAILABLE,
                 integrity=CapabilityState.UNAVAILABLE,
-                frame_capture=CapabilityState.UNAVAILABLE,
                 reason="BRAW SDK command is not configured",
             )
         return ParserCapabilities(
             metadata=CapabilityState.PARTIAL,
             integrity=CapabilityState.UNAVAILABLE,
-            frame_capture=CapabilityState.UNAVAILABLE,
             reason="BRAW metadata command configured; sample validation required",
         )
 
@@ -113,16 +110,6 @@ class BrawAdapter:
             reason="integrity command is not implemented in Sprint 0",
         )
 
-    def capture_frames(
-        self,
-        file_path: Path,
-        output_dir: Path,
-        indices: list[int],
-    ) -> list[CapturedFrame]:
-        raise BrawUnavailableError(
-            "BRAW frame capture command is not configured; no frames were produced"
-        )
-
     def check_capability(self, sample_path: Path | None = None) -> CapabilityCheck:
         capabilities = self.capabilities()
         probe = self.probe(sample_path) if sample_path else None
@@ -135,14 +122,12 @@ class BrawAdapter:
                 capabilities = ParserCapabilities(
                     metadata=CapabilityState.AVAILABLE,
                     integrity=CapabilityState.PARTIAL,
-                    frame_capture=CapabilityState.UNAVAILABLE,
-                    reason="metadata command succeeded; frame capture unavailable",
+                    reason="metadata command succeeded",
                 )
             except BrawUnavailableError as exc:
                 capabilities = ParserCapabilities(
                     metadata=CapabilityState.UNAVAILABLE,
                     integrity=CapabilityState.UNAVAILABLE,
-                    frame_capture=CapabilityState.UNAVAILABLE,
                     reason=str(exc),
                 )
         return CapabilityCheck(
@@ -168,7 +153,6 @@ class MockBrawParser:
         return ParserCapabilities(
             metadata=CapabilityState.AVAILABLE,
             integrity=CapabilityState.AVAILABLE,
-            frame_capture=CapabilityState.AVAILABLE,
             reason="mock parser for tests only",
             is_mock=True,
         )
@@ -200,20 +184,6 @@ class MockBrawParser:
             reason="mock integrity ok",
             is_mock=True,
         )
-
-    def capture_frames(
-        self,
-        file_path: Path,
-        output_dir: Path,
-        indices: list[int],
-    ) -> list[CapturedFrame]:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        frames: list[CapturedFrame] = []
-        for index in indices:
-            path = output_dir / f"{file_path.stem}-{index}.jpg"
-            path.write_bytes(b"mock-frame")
-            frames.append(CapturedFrame(index=index, path=path, is_mock=True))
-        return frames
 
 
 def _string_key_payload(payload: object) -> dict[str, str | int | float | bool | None]:

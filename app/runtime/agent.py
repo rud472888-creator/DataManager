@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from app import __version__
 from app.api.schemas import RuntimeStatusPayload
 from app.config import Settings
-from app.parsers.registry import default_registry
-from app.parsers.types import CapabilityState
 from app.persistence.db import Database
 from app.persistence.migrations import apply_migrations
 from app.persistence.repositories import JobRepository, VolumeRepository
@@ -56,55 +54,19 @@ class RuntimeAgent:
         return "local runtime online"
 
     def status_payload(self) -> RuntimeStatusPayload:
-        braw = default_registry().by_format("BRAW")
-        r3d = default_registry().by_format("R3D")
-        arriraw = default_registry().by_format("ARRIRAW")
-        braw_capabilities = braw.capabilities() if braw else None
-        r3d_capabilities = r3d.capabilities() if r3d else None
-        arriraw_capabilities = arriraw.capabilities() if arriraw else None
         return {
             "runtime": "online",
             "version": __version__,
             "platform": "macOS",
             "active_job_id": self.active_job_id(),
             "capabilities": {
-                "braw_metadata": (
-                    braw_capabilities.metadata.value
-                    if braw_capabilities
-                    else CapabilityState.UNKNOWN.value
-                ),
-                "braw_frame_capture": (
-                    braw_capabilities.frame_capture.value
-                    if braw_capabilities
-                    else CapabilityState.UNKNOWN.value
-                ),
-                "r3d_metadata": (
-                    r3d_capabilities.metadata.value
-                    if r3d_capabilities
-                    else CapabilityState.UNKNOWN.value
-                ),
-                "r3d_frame_capture": (
-                    r3d_capabilities.frame_capture.value
-                    if r3d_capabilities
-                    else CapabilityState.UNKNOWN.value
-                ),
-                "arriraw_metadata": (
-                    arriraw_capabilities.metadata.value
-                    if arriraw_capabilities
-                    else CapabilityState.UNKNOWN.value
-                ),
-                "arriraw_frame_capture": (
-                    arriraw_capabilities.frame_capture.value
-                    if arriraw_capabilities
-                    else CapabilityState.UNKNOWN.value
-                ),
                 "checksum": "available",
                 "supported_offload_formats": supported_format_names(),
                 "supported_offload_suffixes": supported_suffixes(),
             },
             "messages": [
                 self.status_message(),
-                "Job requests run through the local runtime offload, parse, and report pipeline.",
+                "Job requests run through the local runtime clone, checksum, and report pipeline.",
             ],
         }
 

@@ -50,7 +50,7 @@ Footage Data Manager는 소규모 촬영 현장에서 발생하는 카메라 데
 
 ### A. 로컬 앱(macOS 실행 본체)
 현장에서 실제 장비와 연결되어 동작하는 본체다.  
-카드/드라이브 연결 감지, 파일 스캔, 오프로드, 체크섬 검증, 메타데이터 파싱, 프레임 캡처, 보고서 생성, 로그 저장, 장애 복구는 모두 이 계층이 수행한다.
+카드/드라이브 연결 감지, 파일 스캔, 오프로드/클론, 체크섬 검증, 클론 보고서 생성, 로그 저장, 장애 복구는 모두 이 계층이 수행한다. 메타데이터 파싱과 프레임 캡처는 별도 프로그램 책임으로 분리한다.
 
 ### B. 웹앱(원격 콘솔)
 브라우저에서 동작하는 원격 관제 인터페이스다.  
@@ -182,8 +182,6 @@ Footage Data Manager는 소규모 촬영 현장에서 발생하는 카메라 데
         ├─ 소스 스캔
         ├─ 오프로드 실행
         ├─ checksum 검증
-        ├─ 메타데이터 파싱
-        ├─ 프레임 캡처
         ├─ 보고서 생성
         └─ 로그/DB 기록
         │
@@ -242,10 +240,10 @@ Local Runtime -> API / Sync Layer -> WebSocket -> Browser
 |---|---|
 | 실행 엔진 | macOS 로컬 앱/로컬 런타임 |
 | 포맷 | BRAW |
-| 핵심 작업 | 볼륨 감지, 스캔, 오프로드, 체크섬 검증, 메타데이터 파싱, 보고서 생성 |
+| 핵심 작업 | 볼륨 감지, 스캔, 오프로드/클론, 체크섬 검증, 클론 보고서 생성 |
 | 원격 기능 | job 생성, 상태 조회, 진행률 모니터링, 로그 열람, cancel/retry/pause/resume |
 | 모바일 | 브라우저 반응형 화면 |
-| 결과물 | checksum PDF, image PDF, metadata XLSX, manifest.json |
+| 결과물 | checksum PDF, manifest.json |
 | 영속화 | SQLite, 이벤트 로그, 파일 단위 결과 기록 |
 
 ### 2.8.2 제외 범위
@@ -301,8 +299,6 @@ v1에서 로컬 UI가 남는 경우 그 성격은 **운영 보조 패널**이다
 | `PAUSING` | 현재 작업 단위를 정리하며 일시정지 진입 중 | 대기 |
 | `PAUSED` | 사용자 또는 정책에 의해 멈춤 | resume/cancel 가능 |
 | `VERIFYING` | 체크섬 비교 중 | cancel 가능 |
-| `PARSING` | 메타데이터 추출 중 | cancel 가능 |
-| `CAPTURING` | 프레임 캡처 중 | cancel 가능 |
 | `REPORTING` | PDF/XLSX/JSON 생성 중 | cancel 가능 |
 | `WARN` | 부분 실패가 있으나 결과물 생성 가능 | retry 가능 |
 | `FAILED` | 더 진행할 수 없는 실패 | retry 가능 |
@@ -327,7 +323,7 @@ v1에서 로컬 UI가 남는 경우 그 성격은 **운영 보조 패널**이다
 | manifest.json | 기계 판독용 결과 요약 |
 | app logs | 런타임/에러/명령 처리 로그 |
 | report outputs | PDF/XLSX 산출물 |
-| temp cache | 프레임 캡처 이미지, 임시 체크섬 결과, 재개용 중간 정보 |
+| temp cache | 임시 체크섬 결과, 재개용 중간 정보 |
 
 ### 2.10.2 기본 테이블
 
@@ -358,9 +354,8 @@ v1에서 로컬 UI가 남는 경우 그 성격은 **운영 보조 패널**이다
 4. 로컬 앱이 프로젝트 폴더 구조를 생성한다.
 5. 로컬 앱이 메인/백업 복사를 수행한다.
 6. 로컬 앱이 체크섬 검증을 수행한다.
-7. 로컬 앱이 메타데이터 파싱과 프레임 캡처를 수행한다.
-8. 로컬 앱이 보고서를 생성한다.
-9. 웹앱은 전 과정을 모니터링하고 명령을 전송한다.
+7. 로컬 앱이 클론 보고서를 생성한다.
+8. 웹앱은 전 과정을 모니터링하고 명령을 전송한다.
 
 ### 2.11.2 폴더 구조
 
@@ -403,19 +398,18 @@ v1은 BRAW 중심이지만, Core가 나중에 RED/ARRI 등으로 확장될 수 �
 | 메서드 | 반환 | 설명 |
 |---|---|---|
 | `probe(file_path)` | `ProbeResult` | 확장자, magic bytes, confidence, reason |
-| `capabilities()` | `ParserCapabilities` | metadata / integrity / frame_capture 지원 여부 |
+| `capabilities()` | `ParserCapabilities` | metadata / integrity 지원 여부 |
 | `parse_metadata(file_path)` | `ClipMetadata` | 공통 메타데이터 반환 |
 | `check_integrity(file_path)` | `IntegrityResult` | 구조 검사 |
-| `capture_frames(file_path, indices)` | `list[Image]` | 첫/중간/마지막 프레임 캡처 |
 | `get_format_name()` | `str` | 포맷 이름 |
 | `get_version()` | `str` | 파서 버전 |
 
 ### 2.12.2 중요 해석
 
-- 파서는 로컬 앱 안에서 실행된다.
+- 파서 계층은 legacy/별도 도구 연동을 위한 경계로 남긴다.
 - 웹앱은 파서를 직접 호출하지 않는다.
-- 파싱 실패는 파일 단위 실패로 기록하며, 상태와 보고서에 반영한다.
-- BRAW 프레임 캡처는 v1 리스크 항목이므로 초기 POC 게이트로 검증한다.
+- 이 앱의 v1 production pipeline은 파싱이나 프레임 캡처를 수행하지 않는다.
+- BRAW 프레임 캡처는 별도 프로그램에서 검증하며 이 앱의 v1 범위가 아니다.
 
 ## 2.13 API / Sync Layer 명세
 
@@ -516,8 +510,6 @@ footage_data_manager/
 │  │  ├─ scheduler.py
 │  │  ├─ offload.py
 │  │  ├─ verify.py
-│  │  ├─ parse.py
-│  │  ├─ capture.py
 │  │  └─ reports.py
 │  ├─ api/
 │  │  ├─ server.py
@@ -556,10 +548,9 @@ footage_data_manager/
 | P0 | 로컬 런타임/DB/상태 머신 | 실행 본체를 먼저 완성한다. |
 | P0 | BRAW 파서 + 기본 검증 | v1 핵심 포맷과 무결성 검증 확정 |
 | P0 | 오프로드/체크섬/manifest | 실제 작업 파이프라인 완성 |
-| P0.5 | BRAW 프레임 캡처 POC | 이미지 보고서 가능 여부 조기 검증 |
 | P1 | API / WebSocket | 원격 제어/모니터링 계약 확정 |
 | P1 | Remote Web Console | 홈, job 상세, 대기열, 보고서 센터 |
-| P1 | 보고서 3종 | checksum PDF, image PDF, metadata XLSX |
+| P1 | 클론 보고서 | checksum PDF, manifest JSON |
 | P2 | Optional Local Operator Panel | 최소 운영 보조 UI |
 | P2 | 패키징 / 배포 | macOS 앱 번들, 의존성 점검, 로그 경로 확정 |
 
@@ -573,7 +564,7 @@ footage_data_manager/
 ### 2.17.2 기능 수용 기준
 - BRAW 카드 1세트 오프로드가 메인/백업으로 완료된다.
 - 체크섬 결과가 파일 단위로 저장된다.
-- 메타데이터와 프레임 캡처가 보고서에 반영된다.
+- 체크섬과 manifest 결과가 보고서에 반영된다.
 - 브라우저에서 progress, speed, ETA, errors, logs를 실시간으로 볼 수 있다.
 - pause/resume/cancel/retry 명령이 상태 머신에 맞게 동작한다.
 

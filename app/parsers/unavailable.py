@@ -7,7 +7,6 @@ from pathlib import Path
 from app.parsers.errors import ParserUnavailableError
 from app.parsers.types import (
     CapabilityState,
-    CapturedFrame,
     ClipMetadata,
     IntegrityResult,
     IntegrityState,
@@ -34,7 +33,6 @@ class UnavailableFormatParser:
         return ParserCapabilities(
             metadata=CapabilityState.UNAVAILABLE,
             integrity=CapabilityState.UNAVAILABLE,
-            frame_capture=CapabilityState.UNAVAILABLE,
             reason=self.reason,
         )
 
@@ -56,14 +54,6 @@ class UnavailableFormatParser:
 
     def check_integrity(self, file_path: Path) -> IntegrityResult:
         return IntegrityResult(state=IntegrityState.UNKNOWN, reason=self.reason)
-
-    def capture_frames(
-        self,
-        file_path: Path,
-        output_dir: Path,
-        indices: list[int],
-    ) -> list[CapturedFrame]:
-        raise ParserUnavailableError(self.reason)
 
 
 def r3d_unavailable_parser() -> UnavailableFormatParser:

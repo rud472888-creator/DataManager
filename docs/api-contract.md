@@ -6,7 +6,7 @@ Working root: `~/desktop/datamanager`.
 
 The API/sync layer exposes the macOS local runtime through REST and WebSocket. It validates remote web console requests, forwards accepted command requests to the runtime, and returns runtime-owned state. It is not a browser filesystem bridge.
 
-The web console may consume only these API responses and WebSocket events. It must never access local files directly, execute parsers, compute checksums, run SDKs, or write arbitrary paths.
+The web console may consume only these API responses and WebSocket events. It must never access local files directly, execute parsers, capture frames, compute checksums, run SDKs, or write arbitrary paths.
 
 ## REST Routes
 
@@ -20,7 +20,7 @@ The web console may consume only these API responses and WebSocket events. It mu
 | GET | `/api/jobs/{job_id}/logs` | Job event and error log view |
 | GET | `/api/jobs/{job_id}/reports` | Runtime-generated report artifacts |
 | POST | `/api/jobs/{job_id}/command` | Request pause, resume, cancel, retry, or refresh |
-| GET | `/api/clips` | Parsed clip metadata query |
+| GET | `/api/clips` | Legacy parsed clip metadata query; empty for clone-only jobs |
 | GET | `/api/settings` | Runtime settings view |
 | PATCH | `/api/settings` | Supported settings update, excluding arbitrary path writes |
 
@@ -57,7 +57,7 @@ Recommended HTTP status mapping:
 
 ### `GET /api/runtime/status`
 
-Response: `RuntimeStatus`. It includes runtime online/degraded/offline state, version, platform, active job ID, capabilities, supported offload formats/suffixes, and operator messages. Parser capability values must be truthful: `available`, `unavailable`, `partial`, or `unknown`.
+Response: `RuntimeStatus`. It includes runtime online/degraded/offline state, version, platform, active job ID, clone capabilities, supported offload formats/suffixes, and operator messages.
 
 ### `GET /api/volumes`
 
@@ -123,7 +123,7 @@ Response: append-only runtime events. The web console displays logs but does not
 
 ### `GET /api/jobs/{job_id}/reports`
 
-Response: report artifact metadata and runtime-served URLs for checksum PDF, image PDF, metadata XLSX, and manifest JSON when present.
+Response: report artifact metadata and runtime-served URLs for checksum PDF and manifest JSON when present.
 
 ### `POST /api/jobs/{job_id}/command`
 
@@ -154,11 +154,11 @@ Rejected commands return `409` and must still be persisted as command events whe
 
 ### `GET /api/clips`
 
-Response: parsed clip metadata with filters by job, reel, camera, and parser capability. Empty results are valid when parsing has not run or capability is unavailable.
+Response: legacy parsed clip metadata with filters by job, reel, camera, and parser capability. Clone-only jobs normally return an empty result.
 
 ### `GET/PATCH /api/settings`
 
-Settings include token status, allowed destination roots by runtime-managed ID, dependency/capability status, and UI preferences. PATCH must not allow arbitrary raw path writes from the browser.
+Settings include token status, allowed destination roots by runtime-managed ID, clone capability status, and UI preferences. PATCH must not allow arbitrary raw path writes from the browser.
 
 ## Initial Runtime Status Shape
 
@@ -169,12 +169,6 @@ Settings include token status, allowed destination roots by runtime-managed ID, 
   "platform": "macOS",
   "active_job_id": null,
   "capabilities": {
-    "braw_metadata": "unknown",
-    "braw_frame_capture": "unknown",
-    "r3d_metadata": "unavailable",
-    "r3d_frame_capture": "unavailable",
-    "arriraw_metadata": "unavailable",
-    "arriraw_frame_capture": "unavailable",
     "checksum": "available",
     "supported_offload_formats": ["BRAW", "R3D", "ARRIRAW"],
     "supported_offload_suffixes": [".ari", ".braw", ".mxf", ".r3d"]
@@ -194,8 +188,6 @@ Canonical states:
 - `PAUSING`
 - `PAUSED`
 - `VERIFYING`
-- `PARSING`
-- `CAPTURING`
 - `REPORTING`
 - `WARN`
 - `FAILED`
@@ -264,8 +256,6 @@ Every command decision must be persisted as an event with actor/channel, timesta
 | `PAUSING` | reject | reject | reject | reject | accept |
 | `PAUSED` | reject | accept | accept | reject | accept |
 | `VERIFYING` | reject | reject | accept | reject | accept |
-| `PARSING` | reject | reject | accept | reject | accept |
-| `CAPTURING` | reject | reject | accept | reject | accept |
 | `REPORTING` | reject | reject | accept | reject | accept |
 | `WARN` | reject | reject | reject | accept | accept |
 | `FAILED` | reject | reject | reject | accept | accept |

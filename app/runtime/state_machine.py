@@ -14,8 +14,6 @@ class JobState(StrEnum):
     PAUSING = "PAUSING"
     PAUSED = "PAUSED"
     VERIFYING = "VERIFYING"
-    PARSING = "PARSING"
-    CAPTURING = "CAPTURING"
     REPORTING = "REPORTING"
     WARN = "WARN"
     FAILED = "FAILED"
@@ -42,8 +40,6 @@ COMMAND_MATRIX: dict[JobState, frozenset[CommandName]] = {
     JobState.PAUSING: frozenset({CommandName.REFRESH}),
     JobState.PAUSED: frozenset({CommandName.RESUME, CommandName.CANCEL, CommandName.REFRESH}),
     JobState.VERIFYING: frozenset({CommandName.CANCEL, CommandName.REFRESH}),
-    JobState.PARSING: frozenset({CommandName.CANCEL, CommandName.REFRESH}),
-    JobState.CAPTURING: frozenset({CommandName.CANCEL, CommandName.REFRESH}),
     JobState.REPORTING: frozenset({CommandName.CANCEL, CommandName.REFRESH}),
     JobState.WARN: frozenset({CommandName.RETRY, CommandName.REFRESH}),
     JobState.FAILED: frozenset({CommandName.RETRY, CommandName.REFRESH}),
@@ -71,12 +67,6 @@ ALLOWED_TRANSITIONS: dict[JobState, frozenset[JobState]] = {
     JobState.PAUSING: frozenset({JobState.PAUSED, JobState.FAILED}),
     JobState.PAUSED: frozenset({JobState.COPYING, JobState.CANCELLED}),
     JobState.VERIFYING: frozenset(
-        {JobState.PARSING, JobState.WARN, JobState.FAILED, JobState.CANCELLED}
-    ),
-    JobState.PARSING: frozenset(
-        {JobState.CAPTURING, JobState.REPORTING, JobState.WARN, JobState.FAILED, JobState.CANCELLED}
-    ),
-    JobState.CAPTURING: frozenset(
         {JobState.REPORTING, JobState.WARN, JobState.FAILED, JobState.CANCELLED}
     ),
     JobState.REPORTING: frozenset(
@@ -102,8 +92,6 @@ COMMAND_TARGETS: dict[CommandName, dict[JobState, JobState]] = {
             JobState.COPYING,
             JobState.PAUSED,
             JobState.VERIFYING,
-            JobState.PARSING,
-            JobState.CAPTURING,
             JobState.REPORTING,
         )
     },

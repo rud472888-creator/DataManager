@@ -8,9 +8,11 @@ from app.runtime.state_machine import (
 
 def test_allowed_transition_is_explicit() -> None:
     accepted = decide_transition(JobState.QUEUED, JobState.SCANNING)
+    report_after_verify = decide_transition(JobState.VERIFYING, JobState.REPORTING)
     rejected = decide_transition(JobState.QUEUED, JobState.COMPLETED)
 
     assert accepted.accepted is True
+    assert report_after_verify.accepted is True
     assert rejected.accepted is False
 
 

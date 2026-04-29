@@ -17,16 +17,14 @@
 - SQLite migrations and lifecycle persistence.
 - State machine, command decisions, recovery candidates.
 - Runtime-only synthetic offload/checksum path.
-- Parser capability gate with truthful unavailable real BRAW state.
-- Mock parser/report generation path.
+- Clone-only report generation for checksum PDF and manifest JSON.
 - API routes for runtime, volumes, jobs, logs, reports, clips, settings, commands.
 - Responsive browser console core UX.
 - Recovery/reload/local-panel smoke behavior.
 
 ## What Not To Claim
 
-- Do not claim real BRAW SDK support.
-- Do not claim real frame capture support.
+- Do not claim metadata parsing or frame capture as part of this app.
 - Do not claim macOS signed packaging.
 - Do not expose the service beyond trusted LAN/local use without more security work.
 

@@ -25,7 +25,7 @@ The architecture boundary is fixed and must never drift:
 ## 1. Spec Digest
 
 ### Product one-line definition
-A macOS-local footage data manager that detects media volumes, offloads BRAW footage to main/backup destinations, verifies integrity, parses metadata, captures frames, generates reports, and exposes a browser-based remote console for job control and monitoring.
+A macOS-local footage clone manager that detects media volumes, offloads camera footage to main/backup destinations, verifies integrity, generates clone reports, and exposes a browser-based remote console for job control and monitoring. Metadata parsing and frame capture are handled by a separate program.
 
 ### Target users / roles
 - **Local operator / DIT / data wrangler** running the macOS runtime on the field machine.
@@ -36,7 +36,7 @@ A macOS-local footage data manager that detects media volumes, offloads BRAW foo
 1. **Field start**
    - Card inserted -> local runtime detects volume -> remote console loads detected sources and allowed destinations -> operator creates job -> runtime executes.
 2. **Offload execution**
-   - Runtime scans source -> prepares folder structure -> copies to main/backup -> verifies checksums -> parses metadata -> captures frames -> generates checksum/image/XLSX/manifest outputs.
+   - Runtime scans source -> prepares folder structure -> copies to main/backup -> verifies checksums -> generates checksum/manifest outputs.
 3. **Remote monitoring**
    - Browser shows runtime status, job progress, speed, ETA, current file, warnings/errors, logs, and report links in real time.
 4. **Remote command/control**
@@ -55,12 +55,9 @@ A macOS-local footage data manager that detects media volumes, offloads BRAW foo
 - state machine for job lifecycle
 - main + backup destination copy
 - checksum verification
-- metadata parsing through a parser contract
-- frame capture capability gate and integration path
+- clone manifest and checksum report generation
 - report generation:
   - checksum PDF
-  - image PDF
-  - metadata XLSX
   - manifest.json
 - SQLite persistence
 - append-only event/log history
@@ -148,8 +145,8 @@ A macOS-local footage data manager that detects media volumes, offloads BRAW foo
 No existing repository or production codebase was provided. These prompts assume a **greenfield** implementation rooted at `~/desktop/datamanager`.
 
 ### Key ambiguities to resolve by documented assumption
-- actual BRAW SDK/library and sample media availability
-- frame capture implementation path and legal/licensing constraints
+- real camera sample media availability for clone validation
+- separate capture-app integration boundary, if operators need to hand off cloned media
 - final packaging method for macOS runtime
 - exact local operator panel technology
 - auth UX for the remote console (simple token entry, config file, or env-based gate)
@@ -171,11 +168,11 @@ No existing repository or production codebase was provided. These prompts assume
 3. v1 auth is **simple token-based auth**, suitable for trusted local/LAN environments.
 4. The runtime is the authority for discovered source volumes and allowed destinations; the web console never accepts arbitrary raw paths.
 5. A single active offload job is the correct stability-first policy for v1.
-6. If real BRAW SDK/media is unavailable during development, the team must implement a truthful capability gate and mocks instead of pretending full BRAW support is complete.
+6. Frame capture and deeper image processing are outside this clone app and belong to a separate program.
 
 ### Risks
-1. **BRAW integration risk**
-   - Metadata extraction and frame capture may depend on SDK availability, sample files, platform constraints, or licensing.
+1. **Camera-media clone validation risk**
+   - Real sample files and target volumes may be unavailable during development, so clone behavior must be validated with truthful fixtures and documented field checks.
 2. **macOS file/volume behavior**
    - Permissions, mounted volumes, removable devices, and `/Volumes` semantics must be handled carefully.
 3. **Partial-copy and recovery correctness**
@@ -202,7 +199,7 @@ No existing repository or production codebase was provided. These prompts assume
 | 4.1 | Sprint 0 — BRAW Capability Gate | parser contract + truthful BRAW gate |
 | 4.2 | Sprint 1 — Runtime State Machine & Persistence | job lifecycle, scheduler, repositories, recovery scaffolding |
 | 4.3 | Sprint 2 — Offload & Checksum Pipeline | scan/copy/verify core path |
-| 4.4 | Sprint 3 — Parsing, Frame Capture & Reports | metadata/capture/report artifacts |
+| 4.4 | Sprint 3 — Clone Reports | checksum/manifest report artifacts |
 | 4.5 | Sprint 4 — API / WebSocket / Command Layer | remote control and state sync contract |
 | 4.6 | Sprint 5 — Remote Web Console Core UX | core browser experience and command flows |
 | 4.7 | Sprint 6 — Recovery, Resilience & Local Operator Panel | restart recovery, reconnect UX, minimal local panel |
@@ -239,7 +236,7 @@ Context
   - macOS Local Runtime / Agent is the only executor of real file operations.
   - Remote Web Console is only for remote job creation, monitoring, logs, reports, and command dispatch through REST + WebSocket.
   - The web console must never perform direct local file access, OS file picking, copy, checksum, parser execution, or arbitrary path writes.
-- v1 scope: BRAW, volume detection, single active offload queue, main/backup destinations, checksum verification, metadata parsing, frame capture gate, report generation, SQLite persistence, remote monitoring/control, responsive browser UI.
+- v1 scope: BRAW-oriented clone/offload, volume detection, single active offload queue, main/backup destinations, checksum verification, clone report generation, SQLite persistence, remote monitoring/control, responsive browser UI.
 - Non-goals: native iOS app, web direct file access, multi-active offload, multi-format ingest beyond BRAW, advanced post-production integrations.
 
 Constraints
@@ -700,7 +697,7 @@ Fix the foundations, add missing tests, rerun all Stage 3 validations, and updat
 ## [Stage 4.1] Sprint 0 — BRAW Capability Gate
 
 - **Why this stage exists**  
-  BRAW metadata extraction and frame capture are the largest technical unknowns. Validate the contract and truthfully isolate the risk before depending on it.
+  BRAW media handling was an early uncertainty. Current production scope is clone-only; keep parser/capability work legacy and do not depend on frame capture here.
 
 - **Recommended Codex mode**: Agent  
 - **Suggested reasoning level**: Extra High  
@@ -716,7 +713,7 @@ Goal
 Create a precise sprint contract for the BRAW capability gate.
 
 Context
-- This sprint exists to de-risk BRAW parsing and frame capture.
+- This sprint exists to preserve truthful legacy BRAW parser boundaries without making frame capture part of this app.
 - The parser runs only inside the local runtime.
 - The project must never fake BRAW capability if SDK/media access is unavailable.
 
@@ -752,7 +749,7 @@ Reporting / update files
 
 ```text
 Goal
-Implement the BRAW capability gate: parser contract, registry, capability model, truthful real-adapter boundary, mocks, and a proof command for metadata + frame-capture capability.
+Implement the BRAW capability gate: parser contract, registry, capability model, truthful real-adapter boundary, mocks, and a proof command for metadata capability.
 
 Context
 - The parser layer executes only in the local runtime.
@@ -1234,15 +1231,13 @@ Rerun the full sprint validation set, update the evaluator file, and do not move
 
 ```text
 Goal
-Create the sprint contract for metadata parsing, frame capture integration, report generation, and artifact persistence.
+Create the sprint contract for clone report generation and artifact persistence.
 
 Context
-- The parser contract and BRAW capability gate already exist.
-- This sprint should integrate parsing/capture into the runtime pipeline after copy/verification.
+- The clone/offload pipeline already exists.
+- This sprint should generate report artifacts after copy/verification.
 - Required artifacts:
   - checksum PDF
-  - image PDF
-  - metadata XLSX
   - manifest.json
 
 Constraints
@@ -1251,16 +1246,16 @@ Constraints
 - Define:
   - scope and out-of-scope
   - touched files/modules
-  - when parsing/capture/reporting occur in the job lifecycle
+  - when reporting occurs in the job lifecycle
   - required artifact outputs and persistence records
-  - fallback/partial behavior when capture is unavailable
+  - fallback/partial behavior when clone artifacts cannot be created
   - what blocks v1 completion vs what is acceptable as a documented development gap
 
 Deliverables
 - `docs/sprints/sprint-3-parse-capture-reports.md`
 
 Done when
-- The contract clearly distinguishes real capability, mock capability, partial artifact states, and v1 completion gates.
+- The contract clearly distinguishes ready, partial, and failed clone artifact states.
 
 Validation
 - `test -f docs/sprints/sprint-3-parse-capture-reports.md`
@@ -1273,46 +1268,34 @@ Reporting / update files
 
 ```text
 Goal
-Implement parsing, frame-capture integration, and report artifact generation in the runtime.
+Implement clone report artifact generation in the runtime.
 
 Context
-- Parsing and frame capture execute only in the runtime layer.
 - Report outputs must be persisted and exposed later through the API as read-only artifacts.
-- Truthful capability handling still applies: do not fake frame capture or metadata extraction.
+- Truthful artifact handling still applies: do not fake reports.
 
 Constraints
 - Work in `~/desktop/datamanager`.
 - Read:
   - `docs/sprints/sprint-3-parse-capture-reports.md`
-  - parser gate docs
   - offload/checksum implementation
 - Implement:
-  - runtime integration for metadata parsing after verification
-  - clip metadata persistence
-  - frame-capture integration path
   - checksum PDF generation
-  - image PDF generation
-  - metadata XLSX generation
   - final manifest.json generation
   - report/artifact persistence records
-- If frame capture is unavailable in the current environment:
-  - do not fabricate image outputs
-  - mark capability/report status truthfully
-  - document what remains blocked for full v1 readiness
 - Keep report visual language simple, clean, black/white-first, and operationally useful.
 - Do not move report-generation concerns into the web console.
 
 Deliverables
-- runtime parse/capture/report modules
+- runtime clone report module
 - artifact generation code
-- persistence for clips/reports
+- persistence for reports
 - tests using mock parser and conditional real-BRAW integration checks
 - docs updates on capability status and artifact behavior
 
 Done when
-- Verified jobs can produce metadata and report artifacts through the runtime path.
+- Verified jobs can produce checksum and manifest artifacts through the runtime path.
 - Artifacts are persisted and indexable.
-- The implementation is truthful about missing real-capture capability if blocked.
 - Mock/integration tests cover both success and unavailable paths.
 
 Validation

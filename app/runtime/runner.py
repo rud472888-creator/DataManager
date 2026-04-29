@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.parsers.registry import default_registry
 from app.persistence.db import Database
 from app.persistence.models import Job, SystemVolume
 from app.persistence.repositories import EventRepository, JobRepository
 from app.runtime.lifecycle import JobLifecycleService
 from app.runtime.offload import DestinationPlan, OffloadService
-from app.runtime.parse import ParseService
 from app.runtime.reports import ReportService
 from app.runtime.state_machine import JobState
 from app.runtime.volume_monitor import VolumeProvider
@@ -35,7 +33,7 @@ class RuntimeJobRunner:
         self.volume_provider = volume_provider
 
     def run(self, job_id: str) -> None:
-        """Run one queued job through offload, parse, and report generation."""
+        """Run one queued job through clone, checksum, and report generation."""
 
         try:
             if not self._transition(job_id, JobState.SCANNING):
@@ -57,19 +55,12 @@ class RuntimeJobRunner:
                 return
             if not self._transition(job_id, JobState.VERIFYING):
                 return
-            if not self._transition(job_id, JobState.PARSING):
-                return
             project_root = plan.main_project_root
-            ParseService(self.database, default_registry()).parse_job(
-                job_id,
-                project_root / "01_footage",
-            )
             if not self._transition(job_id, JobState.REPORTING):
                 return
             ReportService(self.database).generate(
                 job_id=job_id,
                 project_root=project_root,
-                frames_available=False,
             )
             self._transition(
                 job_id,
