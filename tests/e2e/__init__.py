@@ -1,0 +1,1 @@
+"""Browser smoke tests."""

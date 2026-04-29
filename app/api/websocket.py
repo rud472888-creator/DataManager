@@ -1,41 +1,31 @@
+"""WebSocket endpoint for bootstrap runtime events."""
+
 from __future__ import annotations
 
-import asyncio
+from fastapi import APIRouter, WebSocket
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-
-from app.api.deps import websocket_require_token
-from app.runtime.events import EventBus, utc_now_iso
-
+from app.api.schemas import WebSocketStatusPayload
+from app.runtime.agent import RuntimeAgent
 
 router = APIRouter(tags=["websocket"])
 
 
-@router.websocket("/ws/events")
-async def websocket_events(websocket: WebSocket) -> None:
+@router.websocket("/ws/runtime")
+async def runtime_events(websocket: WebSocket) -> None:
+    """Send a single status event and keep the endpoint shape stable."""
+
     await websocket.accept()
-    try:
-        await websocket_require_token(websocket)
-    except RuntimeError:
+    agent = websocket.app.state.agent
+    if not isinstance(agent, RuntimeAgent):
+        await websocket.close(code=1011)
         return
-    event_bus: EventBus = websocket.app.state.event_bus
-    queue = event_bus.subscribe()
-    try:
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=15)
-                await websocket.send_json(EventBus.serialize(event))
-            except TimeoutError:
-                await websocket.send_json(
-                    {
-                        "event_id": None,
-                        "type": "runtime.heartbeat",
-                        "timestamp": utc_now_iso(),
-                        "job_id": None,
-                        "payload": {"message": "heartbeat"},
-                    }
-                )
-    except WebSocketDisconnect:
-        pass
-    finally:
-        event_bus.unsubscribe(queue)
+    status = agent.status_payload()
+    event = agent.events.publish("runtime_status", dict(status))
+    payload: WebSocketStatusPayload = {
+        "type": "runtime_status",
+        "event_id": event.event_id,
+        "timestamp": event.timestamp,
+        **status,
+    }
+    await websocket.send_json(payload)
+    await websocket.close()

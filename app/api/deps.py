@@ -1,35 +1,43 @@
+"""FastAPI dependencies for the local runtime API."""
+
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, Request, WebSocket, status
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.status import HTTP_401_UNAUTHORIZED
 
 from app.runtime.agent import RuntimeAgent
 
-
 bearer_scheme = HTTPBearer(auto_error=False)
+BearerCredentials = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
 
-def get_runtime_agent(request: Request) -> RuntimeAgent:
-    return request.app.state.runtime_agent
+def get_agent(request: Request) -> RuntimeAgent:
+    """Return the process-local runtime agent."""
+
+    agent = getattr(request.app.state, "agent", None)
+    if not isinstance(agent, RuntimeAgent):
+        raise RuntimeError("runtime agent is not initialized")
+    return agent
 
 
 def require_token(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    runtime_agent: RuntimeAgent = Depends(get_runtime_agent),
-) -> str:
-    if credentials is None or credentials.credentials != runtime_agent.settings.token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    return credentials.credentials
+    request: Request,
+    credentials: BearerCredentials,
+) -> None:
+    """Validate a simple bearer token for protected Stage 3 skeleton routes."""
 
-
-async def websocket_require_token(websocket: WebSocket) -> None:
-    runtime_agent: RuntimeAgent = websocket.app.state.runtime_agent
-    query_token = websocket.query_params.get("token")
-    if query_token == runtime_agent.settings.token:
-        return
-    header_value = websocket.headers.get("authorization", "")
-    prefix = "bearer "
-    token = header_value[len(prefix):] if header_value.lower().startswith(prefix) else None
-    if token != runtime_agent.settings.token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        raise RuntimeError("Invalid websocket token")
+    settings = get_agent(request).settings
+    if credentials is None or credentials.credentials != settings.token:
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": {
+                    "code": "unauthorized",
+                    "message": "A valid bearer token is required.",
+                    "details": {},
+                }
+            },
+        )

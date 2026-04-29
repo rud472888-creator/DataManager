@@ -9,10 +9,12 @@ __pycache__/
 .venv.broken-*/
 dist/
 build/
+*.egg-info/
 *.spec
 .DS_Store
 .fdm_data/
 .fdm_dest/
+.fdm_fixtures/
 *.sqlite3
 .omx/logs/
 .omx/metrics.json

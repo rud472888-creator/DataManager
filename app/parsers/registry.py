@@ -1,23 +1,46 @@
+"""Runtime parser registry."""
+
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Iterable
+from dataclasses import dataclass, field
 
-from app.parsers.braw_parser import BrawParser
-from app.parsers.base import BaseParser
-
-
-def get_registered_parsers() -> list[BaseParser]:
-    return [BrawParser()]
+from app.parsers.base import Parser
+from app.parsers.braw_parser import BrawAdapter, MockBrawParser
 
 
-def select_parser(file_path: Path, parsers: Iterable[BaseParser] | None = None) -> BaseParser | None:
-    candidates = list(parsers or get_registered_parsers())
-    best_match: tuple[float, BaseParser] | None = None
-    for parser in candidates:
-        probe = parser.probe(file_path)
-        if not probe.supported:
-            continue
-        if best_match is None or probe.confidence > best_match[0]:
-            best_match = (probe.confidence, parser)
-    return best_match[1] if best_match is not None else None
+@dataclass
+class ParserRegistry:
+    """Simple in-process registry for runtime parser adapters."""
+
+    parsers: list[Parser] = field(default_factory=list)
+
+    def register(self, parser: Parser) -> None:
+        self.parsers.append(parser)
+
+    def by_format(self, format_name: str) -> Parser | None:
+        for parser in self.parsers:
+            if parser.get_format_name().lower() == format_name.lower():
+                return parser
+        return None
+
+    def all(self) -> list[Parser]:
+        return list(self.parsers)
+
+
+def default_registry(*, include_mock: bool = False) -> ParserRegistry:
+    """Build the runtime parser registry.
+
+    Mock parsers are opt-in so tests cannot accidentally claim real BRAW support.
+    """
+
+    registry = ParserRegistry()
+    registry.register(BrawAdapter.from_environment())
+    if include_mock:
+        registry.register(MockBrawParser())
+    return registry
+
+
+def registered_parsers() -> list[Parser]:
+    """Return production runtime parser plugins."""
+
+    return default_registry().all()

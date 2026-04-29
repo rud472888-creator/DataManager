@@ -1,1 +1,1 @@
-"""Optional local operator panel placeholder."""
+"""Optional local operator panel package."""

@@ -1,42 +1,52 @@
+"""Report artifact routes."""
+
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
+from starlette.status import HTTP_404_NOT_FOUND
 
-from app.api.deps import get_runtime_agent, require_token
-from app.runtime.agent import RuntimeAgent
-from app.runtime.reports import resolve_report_content
+from app.persistence.repositories import ReportRepository
 
-
-router = APIRouter(prefix="/api", tags=["reports"])
+router = APIRouter(prefix="/api/jobs", tags=["reports"])
 
 
-@router.get("/jobs/{job_id}/reports", dependencies=[Depends(require_token)])
-async def get_job_reports(
-    job_id: str,
-    runtime_agent: RuntimeAgent = Depends(get_runtime_agent),
-) -> dict[str, object]:
-    if runtime_agent.get_job(job_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    return {"items": runtime_agent.list_reports(job_id)}
+@router.get("/{job_id}/reports")
+def job_reports(request: Request, job_id: str) -> dict[str, list[dict[str, object]]]:
+    """Return report artifact metadata."""
+
+    with request.app.state.agent.database.session() as connection:
+        reports = ReportRepository(connection).list_for_job(job_id)
+    return {"reports": [_report_payload(job_id, report.__dict__) for report in reports]}
 
 
-@router.get("/reports/{report_id}/content", dependencies=[Depends(require_token)])
-async def get_report_content(
-    report_id: str,
-    runtime_agent: RuntimeAgent = Depends(get_runtime_agent),
-) -> FileResponse:
+@router.get("/{job_id}/reports/{report_id}/download")
+def download_report(request: Request, job_id: str, report_id: str) -> FileResponse:
+    """Serve a runtime-generated report artifact if it is under the data dir."""
+
+    with request.app.state.agent.database.session() as connection:
+        reports = ReportRepository(connection).list_for_job(job_id)
+    report = next((item for item in reports if item.report_id == report_id), None)
+    if report is None or report.status != "ready":
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="report unavailable")
+    root = request.app.state.agent.settings.data_dir.resolve()
+    path = (root / report.artifact_relpath).resolve()
+    if not _is_relative_to(path, root) or not path.exists():
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="report file not found")
+    return FileResponse(path)
+
+
+def _report_payload(job_id: str, report: dict[str, object]) -> dict[str, object]:
+    payload = dict(report)
+    payload["download_url"] = f"/api/jobs/{job_id}/reports/{report['report_id']}/download"
+    return payload
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
     try:
-        _, path, media_type = resolve_report_content(
-            report_id=report_id,
-            settings=runtime_agent.settings,
-            persistence=runtime_agent.persistence,
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found") from exc
-    except FileNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Report index is stale",
-        ) from exc
-    return FileResponse(path, filename=path.name, media_type=media_type)
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True

@@ -1,36 +1,44 @@
+"""Runtime-only parser protocol."""
+
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Protocol
 
-from app.parsers.types import ClipMetadata, ParserCapabilities, ProbeResult
+from app.parsers.types import (
+    CapturedFrame,
+    ClipMetadata,
+    IntegrityResult,
+    ParserCapabilities,
+    ProbeResult,
+)
 
 
-class BaseParser(ABC):
-    @abstractmethod
-    def probe(self, file_path: Path) -> ProbeResult:
-        raise NotImplementedError
+class Parser(Protocol):
+    """Parser contract executed only by the local runtime."""
 
-    @abstractmethod
-    def capabilities(self) -> ParserCapabilities:
-        raise NotImplementedError
-
-    @abstractmethod
-    def parse_metadata(self, file_path: Path) -> ClipMetadata:
-        raise NotImplementedError
-
-    @abstractmethod
-    def check_integrity(self, file_path: Path) -> dict[str, object]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def capture_frames(self, file_path: Path, indices: list[int]) -> list[Path]:
-        raise NotImplementedError
-
-    @abstractmethod
     def get_format_name(self) -> str:
-        raise NotImplementedError
+        """Return the media format name."""
 
-    @abstractmethod
     def get_version(self) -> str:
-        raise NotImplementedError
+        """Return the parser adapter version."""
+
+    def capabilities(self) -> ParserCapabilities:
+        """Return truthful parser capability status."""
+
+    def probe(self, file_path: Path) -> ProbeResult:
+        """Inspect a local runtime path."""
+
+    def parse_metadata(self, file_path: Path) -> ClipMetadata:
+        """Parse metadata from a local runtime path."""
+
+    def check_integrity(self, file_path: Path) -> IntegrityResult:
+        """Check media integrity from a local runtime path."""
+
+    def capture_frames(
+        self,
+        file_path: Path,
+        output_dir: Path,
+        indices: list[int],
+    ) -> list[CapturedFrame]:
+        """Capture frames from a local runtime path."""

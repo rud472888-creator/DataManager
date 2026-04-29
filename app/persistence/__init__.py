@@ -1,1 +1,1 @@
-"""Persistence layer for Footage Data Manager."""
+"""Persistence package for SQLite bootstrap."""

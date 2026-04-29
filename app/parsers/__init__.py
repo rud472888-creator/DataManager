@@ -1,1 +1,1 @@
-"""Parser interfaces and registrations."""
+"""Parser contract package placeholder."""

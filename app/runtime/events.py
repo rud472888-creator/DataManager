@@ -1,52 +1,30 @@
+"""Runtime event publisher abstraction."""
+
 from __future__ import annotations
 
-import asyncio
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from uuid import uuid4
 
 
-def utc_now_iso() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
-
-
-@dataclass(slots=True)
+@dataclass(frozen=True)
 class RuntimeEvent:
-    event_id: int
     type: str
-    timestamp: str
-    job_id: str | None
-    payload: dict[str, Any]
+    payload: dict[str, object]
+    event_id: str = field(default_factory=lambda: f"evt-{uuid4().hex[:12]}")
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
-class EventBus:
+class MemoryEventPublisher:
+    """In-memory publisher for tests and Stage 3 WebSocket stubs."""
+
     def __init__(self) -> None:
-        self._sequence = 0
-        self._subscribers: set[asyncio.Queue[RuntimeEvent]] = set()
-        self._lock = asyncio.Lock()
+        self._events: list[RuntimeEvent] = []
 
-    async def publish(self, event_type: str, payload: dict[str, Any], job_id: str | None = None) -> RuntimeEvent:
-        async with self._lock:
-            self._sequence += 1
-            event = RuntimeEvent(
-                event_id=self._sequence,
-                type=event_type,
-                timestamp=utc_now_iso(),
-                job_id=job_id,
-                payload=payload,
-            )
-            for queue in list(self._subscribers):
-                queue.put_nowait(event)
-            return event
+    def publish(self, event_type: str, payload: dict[str, object]) -> RuntimeEvent:
+        event = RuntimeEvent(type=event_type, payload=payload)
+        self._events.append(event)
+        return event
 
-    def subscribe(self) -> asyncio.Queue[RuntimeEvent]:
-        queue: asyncio.Queue[RuntimeEvent] = asyncio.Queue()
-        self._subscribers.add(queue)
-        return queue
-
-    def unsubscribe(self, queue: asyncio.Queue[RuntimeEvent]) -> None:
-        self._subscribers.discard(queue)
-
-    @staticmethod
-    def serialize(event: RuntimeEvent) -> dict[str, Any]:
-        return asdict(event)
+    def recent(self) -> list[RuntimeEvent]:
+        return list(self._events)

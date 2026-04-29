@@ -1,64 +1,133 @@
+"""Job and command skeleton routes."""
+
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Annotated
 
-from app.api.deps import get_runtime_agent, require_token
-from app.api.schemas import JobCommandRequest, JobCreateRequest
-from app.runtime.agent import RuntimeAgent
+from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.status import HTTP_400_BAD_REQUEST, HTTP_409_CONFLICT
 
+from app.api.deps import require_token
+from app.api.schemas import (
+    CommandDecisionPayload,
+    CommandRequestPayload,
+    JobCreatePayload,
+    JobListPayload,
+    JobSummaryPayload,
+)
+from app.persistence.models import Job
+from app.persistence.repositories import JobRepository
+from app.runtime.lifecycle import JobCreateRequest, LifecycleError
+from app.runtime.state_machine import CommandName
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+AuthDep = Annotated[None, Depends(require_token)]
 
 
-@router.post("", dependencies=[Depends(require_token)], status_code=status.HTTP_201_CREATED)
-async def create_job(
-    request: JobCreateRequest,
-    runtime_agent: RuntimeAgent = Depends(get_runtime_agent),
-) -> dict[str, object]:
-    try:
-        return await runtime_agent.create_job(
-            project_name=request.project_name,
-            source_volume_id=request.source_volume_id,
-            dest_main_id=request.dest_main_id,
-            dest_backup_id=request.dest_backup_id,
-            policy=request.policy,
-            origin=request.operator_origin,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+@router.get("")
+def list_jobs(request: Request) -> JobListPayload:
+    """Return persisted job summaries."""
+
+    jobs = request.app.state.agent.lifecycle.list_jobs()
+    return {"jobs": [_job_summary(job) for job in jobs]}
 
 
-@router.get("", dependencies=[Depends(require_token)])
-async def list_jobs(runtime_agent: RuntimeAgent = Depends(get_runtime_agent)) -> dict[str, object]:
-    return {"items": runtime_agent.list_jobs()}
+@router.get("/{job_id}")
+def get_job(request: Request, job_id: str) -> dict[str, object]:
+    """Return persisted job detail."""
 
-
-@router.get("/{job_id}", dependencies=[Depends(require_token)])
-async def get_job(job_id: str, runtime_agent: RuntimeAgent = Depends(get_runtime_agent)) -> dict[str, object]:
-    job = runtime_agent.get_job(job_id)
+    with request.app.state.agent.database.session() as connection:
+        job = JobRepository(connection).get(job_id)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    return job
+        raise HTTPException(status_code=HTTP_409_CONFLICT, detail="job not found")
+    return {"job": _job_summary(job)}
 
 
-@router.post("/{job_id}/command", dependencies=[Depends(require_token)])
-async def post_job_command(
-    job_id: str,
-    request: JobCommandRequest,
-    runtime_agent: RuntimeAgent = Depends(get_runtime_agent),
+@router.post("")
+def create_job(
+    request: Request,
+    payload: JobCreatePayload,
+    _auth: AuthDep,
 ) -> dict[str, object]:
+    """Transport job creation to the runtime lifecycle service."""
+
     try:
-        result = await runtime_agent.handle_command(
-            job_id=job_id,
-            command_name=request.command,
-            origin=request.operator_origin,
+        job = request.app.state.agent.lifecycle.create_job(
+            JobCreateRequest(
+                project_name=payload["project_name"],
+                source_volume_id=payload["source_volume_id"],
+                dest_main_id=payload["dest_main_id"],
+                dest_backup_id=payload["dest_backup_id"],
+                operator_origin=payload["operator_origin"],
+                policy=payload.get("policy"),
+            )
         )
-    except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from exc
+    except LifecycleError as exc:
+        raise HTTPException(
+            status_code=HTTP_409_CONFLICT,
+            detail={
+                "error": {
+                    "code": "single_active_job",
+                    "message": str(exc),
+                    "details": {},
+                }
+            },
+        ) from exc
+    return {"job": _job_summary(job)}
+
+
+@router.post("/{job_id}/command")
+def request_command(
+    request: Request,
+    job_id: str,
+    payload: CommandRequestPayload,
+    _auth: AuthDep,
+) -> CommandDecisionPayload:
+    """Validate command shape and return conservative skeleton decisions."""
+
+    try:
+        command = CommandName(payload["command"])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "code": "invalid_command",
+                    "message": f"Unsupported command: {payload['command']}",
+                    "details": {"job_id": job_id},
+                }
+            },
+        ) from exc
+    try:
+        decision = request.app.state.agent.lifecycle.request_command(job_id, command)
+    except LifecycleError as exc:
+        raise HTTPException(
+            status_code=HTTP_409_CONFLICT,
+            detail={
+                "error": {
+                    "code": "lifecycle_error",
+                    "message": str(exc),
+                    "details": {"job_id": job_id},
+                }
+            },
+        ) from exc
     return {
-        "job_id": result.job_id,
-        "command": result.command,
-        "accepted": result.accepted,
-        "message": result.message,
-        "persisted_event_id": result.persisted_event_id,
+        "job_id": job_id,
+        "command": decision.command.value,
+        "accepted": decision.accepted,
+        "state_before": decision.state.value,
+        "state_after": decision.state_after.value,
+        "reason": decision.reason,
+    }
+
+
+def _job_summary(job: Job) -> JobSummaryPayload:
+    return {
+        "job_id": job.job_id,
+        "project_name": job.project_name,
+        "source_volume_id": job.source_volume_id,
+        "dest_main_id": job.dest_main_id,
+        "dest_backup_id": job.dest_backup_id,
+        "state": job.state,
+        "current_step": job.current_step,
     }

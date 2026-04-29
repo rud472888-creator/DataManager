@@ -1,23 +1,18 @@
+"""Clip metadata routes."""
+
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Request
 
-from app.api.deps import get_runtime_agent, require_token
-from app.runtime.agent import RuntimeAgent
-
+from app.persistence.repositories import ClipRepository
 
 router = APIRouter(prefix="/api/clips", tags=["clips"])
 
 
-@router.get("", dependencies=[Depends(require_token)])
-async def list_clips(
-    job_id: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    runtime_agent: RuntimeAgent = Depends(get_runtime_agent),
-) -> dict[str, object]:
-    return {
-        "items": runtime_agent.list_clips(job_id=job_id, limit=limit, offset=offset),
-        "limit": limit,
-        "offset": offset,
-    }
+@router.get("")
+def list_clips(request: Request, job_id: str | None = None) -> dict[str, list[dict[str, object]]]:
+    """Read parsed clip metadata from persistence."""
+
+    with request.app.state.agent.database.session() as connection:
+        clips = ClipRepository(connection).list_for_job(job_id) if job_id else []
+    return {"clips": [clip.__dict__ for clip in clips]}

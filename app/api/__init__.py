@@ -1,1 +1,1 @@
-"""HTTP and WebSocket control plane for Footage Data Manager."""
+"""REST and WebSocket API package."""

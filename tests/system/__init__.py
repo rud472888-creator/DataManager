@@ -1,1 +1,1 @@
-"""System tests."""
+"""System hardening tests."""

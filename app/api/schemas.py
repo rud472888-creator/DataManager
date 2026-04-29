@@ -1,37 +1,99 @@
+"""Typed response payloads for the foundation API."""
+
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal, TypedDict
 
-from pydantic import BaseModel, Field
+CapabilityState = Literal["available", "unavailable", "partial", "unknown"]
+RuntimeState = Literal["online", "degraded", "offline"]
+VolumeKind = Literal["source", "destination"]
+VolumeStatus = Literal["available", "missing", "busy", "read-only", "low-space"]
 
 
-class JobCreateRequest(BaseModel):
-    project_name: str = Field(min_length=1)
+class CapabilityPayload(TypedDict):
+    braw_metadata: CapabilityState
+    braw_frame_capture: CapabilityState
+    checksum: CapabilityState
+
+
+class RuntimeStatusPayload(TypedDict):
+    runtime: RuntimeState
+    version: str
+    platform: str
+    active_job_id: str | None
+    capabilities: CapabilityPayload
+    messages: list[str]
+
+
+class WebSocketStatusPayload(RuntimeStatusPayload):
+    type: Literal["runtime_status"]
+    event_id: str
+    timestamp: str
+
+
+class VolumePayload(TypedDict):
+    volume_id: str
+    label: str
+    kind: VolumeKind
+    status: VolumeStatus
+    display_path: str
+    bytes_available: int | None
+
+
+class VolumeListPayload(TypedDict):
+    sources: list[VolumePayload]
+    destinations: list[VolumePayload]
+
+
+class CommandRequestPayload(TypedDict):
+    command: str
+    operator_origin: str
+    request_id: str
+
+
+class CommandDecisionPayload(TypedDict):
+    job_id: str
+    command: str
+    accepted: bool
+    state_before: str
+    state_after: str
+    reason: str
+
+
+class JobCreatePayload(TypedDict):
+    project_name: str
     source_volume_id: str
     dest_main_id: str
-    dest_backup_id: str | None = None
-    policy: dict[str, Any] = Field(default_factory=dict)
-    operator_origin: str = "remote_web"
+    dest_backup_id: str | None
+    operator_origin: str
+    policy: dict[str, object]
 
 
-class JobCommandRequest(BaseModel):
-    command: Literal["pause", "resume", "cancel", "retry"]
-    operator_origin: str = "remote_web"
+class JobSummaryPayload(TypedDict):
+    job_id: str
+    project_name: str
+    source_volume_id: str
+    dest_main_id: str
+    dest_backup_id: str | None
+    state: str
+    current_step: str | None
 
 
-class RuntimeStatusResponse(BaseModel):
-    app_name: str
-    app_version: str
-    status: str
-    started_at: str
-    db_path: str
-    active_job_id: str | None
-    queue_depth: int
-    dependencies: dict[str, Any]
-    stubbed_components: list[str]
+class JobListPayload(TypedDict):
+    jobs: list[JobSummaryPayload]
 
 
-class SettingsPatchRequest(BaseModel):
-    allowed_destination_roots: list[str] | None = None
-    poll_interval_sec: int | None = Field(default=None, ge=1, le=3600)
-    token: str | None = Field(default=None, min_length=1)
+class SettingsPayload(TypedDict):
+    token_required: bool
+    allowed_destinations: list[str]
+    data_dir: str
+
+
+class ErrorDetailPayload(TypedDict):
+    code: str
+    message: str
+    details: dict[str, object]
+
+
+class ErrorPayload(TypedDict):
+    error: ErrorDetailPayload

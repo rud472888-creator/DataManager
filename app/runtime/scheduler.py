@@ -1,32 +1,39 @@
+"""Single-active-job scheduler skeleton."""
+
 from __future__ import annotations
 
-from app.persistence.models import JobRecord
-from app.runtime.state_machine import ACTIVE_STATES, JobState
+from dataclasses import dataclass
 
 
-class Scheduler:
-    """Single-active-job scheduler shell for A1.
+@dataclass(frozen=True)
+class SchedulerStatus:
+    active_job_id: str | None
+    accepts_new_job: bool
+    reason: str
 
-    Real scan/offload/verify execution is intentionally stubbed in this phase.
-    """
+
+class SingleActiveJobScheduler:
+    """Foundation scheduler enforcing v1 single-active-job policy."""
 
     def __init__(self) -> None:
         self._active_job_id: str | None = None
 
-    @property
-    def active_job_id(self) -> str | None:
-        return self._active_job_id
+    def status(self) -> SchedulerStatus:
+        if self._active_job_id is None:
+            return SchedulerStatus(
+                active_job_id=None,
+                accepts_new_job=True,
+                reason="no active job",
+            )
+        return SchedulerStatus(
+            active_job_id=self._active_job_id,
+            accepts_new_job=False,
+            reason="single active offload policy",
+        )
 
-    def sync_from_jobs(self, jobs: list[JobRecord]) -> None:
-        active = [job.job_id for job in jobs if JobState(job.state) in ACTIVE_STATES]
-        self._active_job_id = active[0] if active else None
-
-    def can_accept_active_work(self) -> bool:
-        return self._active_job_id is None
-
-    def mark_active(self, job_id: str) -> None:
+    def reserve(self, job_id: str) -> SchedulerStatus:
+        status = self.status()
+        if not status.accepts_new_job:
+            return status
         self._active_job_id = job_id
-
-    def clear_active_if_matches(self, job_id: str) -> None:
-        if self._active_job_id == job_id:
-            self._active_job_id = None
+        return self.status()
