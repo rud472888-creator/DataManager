@@ -45,7 +45,7 @@ The demo script applies migrations and prints the local server command plus the 
 
 ## Current Capability Status
 
-- Synthetic `.braw` fixture offload/copy/checksum path: implemented and tested.
+- API-created synthetic `.braw` fixture jobs run through offload/copy/checksum/report generation and are tested.
 - Runtime parser/report plumbing with mock parser: implemented and tested.
 - Real BRAW SDK metadata/frame capture: unavailable until `FDM_BRAW_METADATA_COMMAND` and real sample media are provided.
 - macOS packaging/signing: documented as a release blocker, not claimed complete.

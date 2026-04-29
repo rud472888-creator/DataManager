@@ -12,6 +12,7 @@ Working root: `~/desktop/datamanager`.
    - `FDM_TOKEN`
    - `FDM_DATA_DIR`
    - `FDM_DATABASE_PATH`
+   - `FDM_DEV_SOURCE_ROOT` for local fixture/dev runs
    - `FDM_ALLOWED_DEST_ROOTS`
    - `FDM_BRAW_METADATA_COMMAND` when a real adapter exists
 4. Apply migrations.

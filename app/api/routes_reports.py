@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from starlette.status import HTTP_404_NOT_FOUND
 
-from app.persistence.repositories import ReportRepository
+from app.persistence.repositories import JobRepository, ReportRepository
 
 router = APIRouter(prefix="/api/jobs", tags=["reports"])
 
@@ -27,11 +27,14 @@ def download_report(request: Request, job_id: str, report_id: str) -> FileRespon
     """Serve a runtime-generated report artifact if it is under the data dir."""
 
     with request.app.state.agent.database.session() as connection:
+        job = JobRepository(connection).get(job_id)
         reports = ReportRepository(connection).list_for_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="job not found")
     report = next((item for item in reports if item.report_id == report_id), None)
     if report is None or report.status != "ready":
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="report unavailable")
-    root = request.app.state.agent.settings.data_dir.resolve()
+    root = request.app.state.agent.runner.project_root_for_job(job).resolve()
     path = (root / report.artifact_relpath).resolve()
     if not _is_relative_to(path, root) or not path.exists():
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="report file not found")

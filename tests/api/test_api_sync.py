@@ -12,8 +12,13 @@ from app.persistence.repositories import (
 
 
 def _client(monkeypatch, tmp_path) -> TestClient:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "A001_C001.braw").write_bytes(b"clip")
     monkeypatch.setenv("FDM_DATABASE_PATH", str(tmp_path / "fdm.sqlite3"))
     monkeypatch.setenv("FDM_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("FDM_DEV_SOURCE_ROOT", str(source))
+    monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", str(tmp_path / "main"))
     return TestClient(create_app())
 
 
@@ -62,7 +67,7 @@ def test_job_create_detail_command_and_logs(monkeypatch, tmp_path) -> None:
     assert created.status_code == 200
     assert rejected.status_code == 200
     assert rejected.json()["accepted"] is False
-    assert detail.json()["job"]["state"] == "QUEUED"
+    assert detail.json()["job"]["state"] == "COMPLETED"
     assert any(
         event["command"] == "resume" and event["accepted"] is False
         for event in logs.json()["events"]
@@ -72,13 +77,19 @@ def test_job_create_detail_command_and_logs(monkeypatch, tmp_path) -> None:
 def test_clips_reports_and_download_are_read_only(monkeypatch, tmp_path) -> None:
     client = _client(monkeypatch, tmp_path)
     database = client.app.state.agent.database
-    data_dir = client.app.state.agent.settings.data_dir
-    artifact = data_dir / "00_master/reports/checksum.pdf"
+    project_root = client.app.state.agent.settings.allowed_dest_roots[0] / "API Reports"
+    artifact = project_root / "00_master/reports/checksum.pdf"
     artifact.parent.mkdir(parents=True)
     artifact.write_bytes(b"%PDF test")
 
     with database.session() as connection:
-        job = JobRepository(connection).create_stub_job("API Reports")
+        job = JobRepository(connection).create_job(
+            project_name="API Reports",
+            source_volume_id="mock-source",
+            dest_main_id="dest-0",
+            dest_backup_id=None,
+            operator_origin="test",
+        )
         clip = Clip(
             clip_id=deterministic_id("clip", job.job_id, "file-1"),
             job_id=job.job_id,
@@ -117,6 +128,31 @@ def test_clips_reports_and_download_are_read_only(monkeypatch, tmp_path) -> None
     assert reports.status_code == 200
     assert downloaded.status_code == 200
     assert downloaded.content == b"%PDF test"
+
+
+def test_job_create_runs_pipeline_and_persists_reports(monkeypatch, tmp_path) -> None:
+    client = _client(monkeypatch, tmp_path)
+
+    created = client.post(
+        "/api/jobs",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "project_name": "Pipeline",
+            "source_volume_id": "mock-source",
+            "dest_main_id": "dest-0",
+            "dest_backup_id": None,
+            "operator_origin": "remote_web",
+            "policy": {},
+        },
+    )
+    job_id = created.json()["job"]["job_id"]
+    detail = client.get(f"/api/jobs/{job_id}")
+    reports = client.get(f"/api/jobs/{job_id}/reports")
+    report_types = {report["report_type"] for report in reports.json()["reports"]}
+
+    assert created.status_code == 200
+    assert detail.json()["job"]["state"] == "COMPLETED"
+    assert {"checksum_pdf", "metadata_xlsx", "manifest_json", "image_pdf"} <= report_types
 
 
 def test_settings_patch_is_token_protected_and_filtered(monkeypatch, tmp_path) -> None:

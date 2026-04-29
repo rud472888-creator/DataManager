@@ -51,6 +51,3 @@ def create_app() -> FastAPI:
         return FileResponse(web_console_dir / "index.html")
 
     return app
-
-
-app = create_app()

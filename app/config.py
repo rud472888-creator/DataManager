@@ -16,6 +16,7 @@ class Settings:
     token: str = "change-me"
     data_dir: Path = Path(".fdm_data")
     database_path: Path = Path(".fdm_data/fdm.sqlite3")
+    dev_source_root: Path = Path(".fdm_fixtures/source")
     allowed_dest_roots: tuple[Path, ...] = (Path(".fdm_dest"),)
     log_level: str = "INFO"
 
@@ -32,6 +33,7 @@ def load_settings() -> Settings:
         token=os.getenv("FDM_TOKEN", "change-me"),
         data_dir=Path(os.getenv("FDM_DATA_DIR", ".fdm_data")),
         database_path=Path(os.getenv("FDM_DATABASE_PATH", ".fdm_data/fdm.sqlite3")),
+        dev_source_root=Path(os.getenv("FDM_DEV_SOURCE_ROOT", ".fdm_fixtures/source")),
         allowed_dest_roots=roots or (Path(".fdm_dest"),),
         log_level=os.getenv("FDM_LOG_LEVEL", "INFO"),
     )

@@ -15,8 +15,13 @@ playwright_sync = pytest.importorskip("playwright.sync_api")
 @pytest.fixture(scope="module")
 def server_url(tmp_path_factory) -> Iterator[str]:
     root = tmp_path_factory.mktemp("console")
+    source = root / "source"
+    source.mkdir()
+    (source / "A001_C001.braw").write_bytes(b"clip")
     os.environ["FDM_DATABASE_PATH"] = str(root / "fdm.sqlite3")
     os.environ["FDM_DATA_DIR"] = str(root / "data")
+    os.environ["FDM_DEV_SOURCE_ROOT"] = str(source)
+    os.environ["FDM_ALLOWED_DEST_ROOTS"] = str(root / "main")
     config = uvicorn.Config(
         create_app(),
         host="127.0.0.1",
@@ -52,7 +57,7 @@ def test_console_home_create_job_and_no_file_input(page: Any, server_url: str) -
     page.get_by_role("button", name="Create job request").click()
 
     page.get_by_text("Job request queued by the local runtime.").wait_for()
-    page.get_by_text("Field Test - QUEUED").wait_for()
+    page.get_by_text("Field Test - COMPLETED").wait_for()
     assert page.locator("input[type=file]").count() == 0
 
 
@@ -69,9 +74,10 @@ def test_console_mobile_primary_action(page: Any, server_url: str) -> None:
 
 def test_console_reload_keeps_job_visible(page: Any, server_url: str) -> None:
     page.goto(server_url)
+    page.locator("#project-name").fill("Field Reload")
     page.get_by_role("button", name="Create job request").click()
-    page.get_by_text("Field Test - QUEUED").wait_for()
+    page.get_by_text("Field Reload - COMPLETED").wait_for()
 
     page.reload()
 
-    page.get_by_text("Field Test - QUEUED").wait_for()
+    page.get_by_text("Field Reload - COMPLETED").wait_for()

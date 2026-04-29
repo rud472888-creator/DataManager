@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from starlette.status import HTTP_400_BAD_REQUEST, HTTP_409_CONFLICT
 
 from app.api.deps import require_token
@@ -46,6 +46,7 @@ def get_job(request: Request, job_id: str) -> dict[str, object]:
 @router.post("")
 def create_job(
     request: Request,
+    background_tasks: BackgroundTasks,
     payload: JobCreatePayload,
     _auth: AuthDep,
 ) -> dict[str, object]:
@@ -73,6 +74,7 @@ def create_job(
                 }
             },
         ) from exc
+    background_tasks.add_task(request.app.state.agent.run_job, job.job_id)
     return {"job": _job_summary(job)}
 
 

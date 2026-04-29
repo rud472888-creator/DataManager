@@ -68,17 +68,23 @@ class OffloadService:
         job_id: str,
         source_root: Path,
         plan: DestinationPlan,
+        finalize_state: bool = True,
     ) -> OffloadResult:
         try:
             scanned_files = scan_source(source_root)
         except OSError as exc:
-            return self._fail_job(job_id, "source_unavailable", str(exc))
+            return self._fail_job(job_id, "source_unavailable", str(exc), finalize_state)
         if not scanned_files:
-            return self._fail_job(job_id, "no_supported_files", "no supported files found")
+            return self._fail_job(
+                job_id,
+                "no_supported_files",
+                "no supported files found",
+                finalize_state,
+            )
         try:
             self._prepare_destinations(plan, scanned_files)
         except OffloadError as exc:
-            return self._fail_job(job_id, "destination_error", str(exc))
+            return self._fail_job(job_id, "destination_error", str(exc), finalize_state)
 
         results: list[JobFile] = []
         saw_backup_failure = False
@@ -91,12 +97,13 @@ class OffloadService:
                     JobState.FAILED,
                     results,
                     result.error_code or "failed",
+                    finalize_state,
                 )
             if result.status == "warn":
                 saw_backup_failure = True
         state = JobState.WARN if saw_backup_failure else JobState.COMPLETED
         reason = "backup failure" if saw_backup_failure else "offload verified"
-        return self._finish_job(job_id, state, results, reason)
+        return self._finish_job(job_id, state, results, reason, finalize_state)
 
     def _prepare_destinations(
         self,
@@ -172,8 +179,14 @@ class OffloadService:
             error_message=error_message,
         )
 
-    def _fail_job(self, job_id: str, code: str, reason: str) -> OffloadResult:
-        return self._finish_job(job_id, JobState.FAILED, [], f"{code}: {reason}")
+    def _fail_job(
+        self,
+        job_id: str,
+        code: str,
+        reason: str,
+        finalize_state: bool,
+    ) -> OffloadResult:
+        return self._finish_job(job_id, JobState.FAILED, [], f"{code}: {reason}", finalize_state)
 
     def _finish_job(
         self,
@@ -181,6 +194,7 @@ class OffloadService:
         state: JobState,
         files: list[JobFile],
         reason: str,
+        finalize_state: bool,
     ) -> OffloadResult:
         with self.database.session() as connection:
             jobs = JobRepository(connection)
@@ -191,7 +205,8 @@ class OffloadService:
             job = jobs.get(job_id)
             if job is None:
                 raise OffloadError(f"job not found: {job_id}")
-            jobs.update_state(job_id, state, current_step=state.value.lower())
+            if finalize_state:
+                jobs.update_state(job_id, state, current_step=state.value.lower())
             events.append(
                 "offload_finished",
                 job_id=job_id,

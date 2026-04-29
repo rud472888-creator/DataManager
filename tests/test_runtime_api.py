@@ -1,13 +1,24 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.api.server import create_app
+from app.runtime.lifecycle import JobCreateRequest
 
 
 @pytest.fixture()
 def client(monkeypatch, tmp_path) -> TestClient:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "A001_C001.braw").write_bytes(b"clip")
     monkeypatch.setenv("FDM_DATABASE_PATH", str(tmp_path / "fdm.sqlite3"))
     monkeypatch.setenv("FDM_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("FDM_DEV_SOURCE_ROOT", str(source))
+    monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", str(tmp_path / "main"))
     return TestClient(create_app())
 
 
@@ -23,7 +34,24 @@ def test_runtime_status_payload(client: TestClient) -> None:
     assert payload["capabilities"]["checksum"] == "available"
     assert payload["capabilities"]["braw_metadata"] == "unavailable"
     assert payload["capabilities"]["braw_frame_capture"] == "unavailable"
-    assert "foundation" in payload["messages"][0]
+    assert payload["messages"][0] == "local runtime online"
+
+
+def test_runtime_status_reports_persisted_active_job(client: TestClient) -> None:
+    job = client.app.state.agent.lifecycle.create_job(
+        JobCreateRequest(
+            project_name="Status",
+            source_volume_id="mock-source",
+            dest_main_id="dest-0",
+            dest_backup_id=None,
+            operator_origin="test",
+            policy={},
+        )
+    )
+
+    response = client.get("/api/runtime/status")
+
+    assert response.json()["active_job_id"] == job.job_id
 
 
 def test_volumes_are_runtime_owned_mock_candidates(client: TestClient) -> None:
@@ -65,22 +93,19 @@ def test_settings_requires_token(client: TestClient) -> None:
 
 
 def test_command_auth_and_decision(client: TestClient) -> None:
-    created = client.post(
-        "/api/jobs",
-        headers={"Authorization": "Bearer change-me"},
-        json={
-            "project_name": "API Test",
-            "source_volume_id": "mock-source",
-            "dest_main_id": "dest-0",
-            "dest_backup_id": None,
-            "operator_origin": "remote_web",
-            "policy": {},
-        },
+    job = client.app.state.agent.lifecycle.create_job(
+        JobCreateRequest(
+            project_name="API Test",
+            source_volume_id="mock-source",
+            dest_main_id="dest-0",
+            dest_backup_id=None,
+            operator_origin="remote_web",
+            policy={},
+        )
     )
-    job_id = created.json()["job"]["job_id"]
 
     response = client.post(
-        f"/api/jobs/{job_id}/command",
+        f"/api/jobs/{job.job_id}/command",
         headers={"Authorization": "Bearer change-me"},
         json={"command": "cancel", "operator_origin": "remote_web", "request_id": "cmd-test"},
     )
@@ -90,3 +115,26 @@ def test_command_auth_and_decision(client: TestClient) -> None:
     assert payload["accepted"] is True
     assert payload["state_before"] == "QUEUED"
     assert payload["state_after"] == "CANCELLED"
+
+
+def test_server_import_does_not_create_default_database(tmp_path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo_root)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import app.api.server; "
+            "from pathlib import Path; "
+            "print(Path('.fdm_data/fdm.sqlite3').exists())",
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.stdout.strip() == "False"

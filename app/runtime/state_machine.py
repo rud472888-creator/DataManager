@@ -62,7 +62,7 @@ class CommandDecision:
 
 
 ALLOWED_TRANSITIONS: dict[JobState, frozenset[JobState]] = {
-    JobState.QUEUED: frozenset({JobState.SCANNING, JobState.CANCELLED}),
+    JobState.QUEUED: frozenset({JobState.SCANNING, JobState.FAILED, JobState.CANCELLED}),
     JobState.SCANNING: frozenset({JobState.PREPARING, JobState.FAILED, JobState.CANCELLED}),
     JobState.PREPARING: frozenset({JobState.COPYING, JobState.FAILED, JobState.CANCELLED}),
     JobState.COPYING: frozenset(

@@ -19,6 +19,15 @@ const operatorName = document.querySelector("#operator-name");
 
 let selectedJobId = null;
 
+function scheduleRefresh() {
+  for (const delay of [250, 1000, 2500]) {
+    window.setTimeout(() => {
+      loadJobs();
+      loadReports();
+    }, delay);
+  }
+}
+
 function authHeaders() {
   return { Authorization: `Bearer ${apiToken.value || "change-me"}` };
 }
@@ -39,8 +48,14 @@ function renderStatus(status) {
     "Connected. Real file operations run on the local runtime, not in this browser.";
 }
 
-function fillSelect(select, items) {
+function fillSelect(select, items, includeEmpty = false) {
   select.replaceChildren();
+  if (includeEmpty) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No backup";
+    select.append(option);
+  }
   for (const item of items) {
     const option = document.createElement("option");
     option.value = item.volume_id;
@@ -53,7 +68,7 @@ async function loadVolumes() {
   const payload = await jsonFetch("/api/volumes");
   fillSelect(sourceSelect, payload.sources);
   fillSelect(mainSelect, payload.destinations);
-  fillSelect(backupSelect, payload.destinations);
+  fillSelect(backupSelect, payload.destinations, true);
   jobFormState.textContent = `${payload.sources.length} source and ${payload.destinations.length} destination option loaded from runtime.`;
 }
 
@@ -121,6 +136,7 @@ jobForm.addEventListener("submit", async (event) => {
     });
     jobFormState.textContent = "Job request queued by the local runtime.";
     selectJob(payload.job);
+    scheduleRefresh();
   } catch (error) {
     jobFormState.textContent = error instanceof Error ? error.message : "Unable to create job.";
   }
@@ -144,6 +160,7 @@ document.querySelectorAll("[data-command]").forEach((button) => {
       });
       commandState.textContent = `${payload.command} ${payload.accepted ? "accepted" : "rejected"}: ${payload.reason}`;
       await loadJobs();
+      scheduleRefresh();
     } catch (error) {
       commandState.textContent = error instanceof Error ? error.message : "Command failed.";
     }

@@ -25,8 +25,9 @@ class VolumeProvider(Protocol):
 class MockVolumeProvider:
     """Safe mock provider for foundation tests and shell UI."""
 
-    def __init__(self, allowed_dest_roots: tuple[Path, ...]) -> None:
+    def __init__(self, allowed_dest_roots: tuple[Path, ...], source_root: Path) -> None:
         self.allowed_dest_roots = allowed_dest_roots
+        self.source_root = source_root
 
     def scan(self) -> VolumeSnapshot:
         destinations = [
@@ -46,7 +47,7 @@ class MockVolumeProvider:
                     volume_id="mock-source",
                     label="Mock Source",
                     kind="source",
-                    display_path="/Volumes/MockSource",
+                    display_path=str(self.source_root),
                     status="available",
                     bytes_available=1024 * 1024,
                 )
