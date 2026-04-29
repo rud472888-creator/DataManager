@@ -14,6 +14,7 @@ from app.persistence.migrations import apply_migrations
 from app.persistence.repositories import JobRepository, VolumeRepository
 from app.runtime.events import MemoryEventPublisher
 from app.runtime.lifecycle import JobLifecycleService
+from app.runtime.media_formats import supported_format_names, supported_suffixes
 from app.runtime.recovery import RecoveryLoader
 from app.runtime.runner import RuntimeJobRunner
 from app.runtime.scheduler import SingleActiveJobScheduler
@@ -56,7 +57,11 @@ class RuntimeAgent:
 
     def status_payload(self) -> RuntimeStatusPayload:
         braw = default_registry().by_format("BRAW")
+        r3d = default_registry().by_format("R3D")
+        arriraw = default_registry().by_format("ARRIRAW")
         braw_capabilities = braw.capabilities() if braw else None
+        r3d_capabilities = r3d.capabilities() if r3d else None
+        arriraw_capabilities = arriraw.capabilities() if arriraw else None
         return {
             "runtime": "online",
             "version": __version__,
@@ -73,7 +78,29 @@ class RuntimeAgent:
                     if braw_capabilities
                     else CapabilityState.UNKNOWN.value
                 ),
+                "r3d_metadata": (
+                    r3d_capabilities.metadata.value
+                    if r3d_capabilities
+                    else CapabilityState.UNKNOWN.value
+                ),
+                "r3d_frame_capture": (
+                    r3d_capabilities.frame_capture.value
+                    if r3d_capabilities
+                    else CapabilityState.UNKNOWN.value
+                ),
+                "arriraw_metadata": (
+                    arriraw_capabilities.metadata.value
+                    if arriraw_capabilities
+                    else CapabilityState.UNKNOWN.value
+                ),
+                "arriraw_frame_capture": (
+                    arriraw_capabilities.frame_capture.value
+                    if arriraw_capabilities
+                    else CapabilityState.UNKNOWN.value
+                ),
                 "checksum": "available",
+                "supported_offload_formats": supported_format_names(),
+                "supported_offload_suffixes": supported_suffixes(),
             },
             "messages": [
                 self.status_message(),

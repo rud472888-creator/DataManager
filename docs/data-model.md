@@ -72,14 +72,14 @@ Recovery-critical fields: relative paths, checksums, status, and error code.
 | `clip_id` | no | Primary key |
 | `job_id` | no | Parent job |
 | `file_id` | no | Parent file |
-| `format_name` | no | BRAW for v1 |
+| `format_name` | no | Parser-reported format name when metadata parsing is available |
 | `parser_version` | no | Adapter version or mock version |
 | `metadata_json` | no | Camera, reel, timecode, resolution, fps, duration when available |
 | `integrity_status` | no | unknown, ok, warn, failed |
 | `capture_status` | no | unavailable, pending, captured, failed |
 | `created_at` | no | UTC timestamp |
 
-Real-BRAW uncertainty is represented through capability and status fields, not fake metadata.
+Real parser uncertainty is represented through capability and status fields, not fake metadata. Multiformat offload/checksum can complete even when metadata parsing is unavailable.
 
 ## `reports`
 

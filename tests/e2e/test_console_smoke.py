@@ -18,6 +18,9 @@ def server_url(tmp_path_factory) -> Iterator[str]:
     source = root / "source"
     source.mkdir()
     (source / "A001_C001.braw").write_bytes(b"clip")
+    (source / "R001_C001.r3d").write_bytes(b"red")
+    (source / "ALEXA_C001.ari").write_bytes(b"arri")
+    (source / "ALEXA_C002.mxf").write_bytes(b"arri-mxf")
     os.environ["FDM_DATABASE_PATH"] = str(root / "fdm.sqlite3")
     os.environ["FDM_DATA_DIR"] = str(root / "data")
     os.environ["FDM_DEV_SOURCE_ROOT"] = str(source)

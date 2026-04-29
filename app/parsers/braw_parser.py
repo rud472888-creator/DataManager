@@ -7,6 +7,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from app.parsers.errors import ParserUnavailableError
 from app.parsers.types import (
     CapabilityCheck,
     CapabilityState,
@@ -19,7 +20,7 @@ from app.parsers.types import (
 )
 
 
-class BrawUnavailableError(RuntimeError):
+class BrawUnavailableError(ParserUnavailableError):
     """Raised when real BRAW behavior is requested but unavailable."""
 
 

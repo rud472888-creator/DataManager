@@ -41,13 +41,13 @@ The smoke script runs lint, format check, typecheck, tests, BRAW capability trut
 scripts/demo_run.sh
 ```
 
-The demo script applies migrations and prints the local server command plus the main URLs. It does not fake BRAW readiness.
+The demo script applies migrations and prints the local server command plus the main URLs. It does not fake parser readiness.
 
 ## Current Capability Status
 
-- API-created synthetic `.braw` fixture jobs run through offload/copy/checksum/report generation and are tested.
+- API-created synthetic `.braw`, `.r3d`, `.ari`, and `.mxf` fixture jobs run through offload/copy/checksum/report generation and are tested.
 - Runtime parser/report plumbing with mock parser: implemented and tested.
-- Real BRAW SDK metadata/frame capture: unavailable until `FDM_BRAW_METADATA_COMMAND` and real sample media are provided.
+- Real BRAW/R3D/ARRIRAW metadata and frame capture: unavailable until format-specific SDK/CLI adapters and real sample media are provided.
 - macOS packaging/signing: documented as a release blocker, not claimed complete.
 
 ## Key Docs

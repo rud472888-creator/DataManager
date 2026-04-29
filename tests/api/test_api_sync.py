@@ -15,6 +15,9 @@ def _client(monkeypatch, tmp_path) -> TestClient:
     source = tmp_path / "source"
     source.mkdir()
     (source / "A001_C001.braw").write_bytes(b"clip")
+    (source / "R001_C001.r3d").write_bytes(b"red")
+    (source / "ALEXA_C001.ari").write_bytes(b"arri")
+    (source / "ALEXA_C002.mxf").write_bytes(b"arri-mxf")
     monkeypatch.setenv("FDM_DATABASE_PATH", str(tmp_path / "fdm.sqlite3"))
     monkeypatch.setenv("FDM_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("FDM_DEV_SOURCE_ROOT", str(source))
@@ -148,10 +151,24 @@ def test_job_create_runs_pipeline_and_persists_reports(monkeypatch, tmp_path) ->
     job_id = created.json()["job"]["job_id"]
     detail = client.get(f"/api/jobs/{job_id}")
     reports = client.get(f"/api/jobs/{job_id}/reports")
+    manifest_url = next(
+        report["download_url"]
+        for report in reports.json()["reports"]
+        if report["report_type"] == "manifest_json"
+    )
+    manifest = client.get(manifest_url).json()
     report_types = {report["report_type"] for report in reports.json()["reports"]}
 
     assert created.status_code == 200
     assert detail.json()["job"]["state"] == "COMPLETED"
+    assert {file["source_relpath"] for file in manifest["files"]} == {
+        "A001_C001.braw",
+        "ALEXA_C001.ari",
+        "ALEXA_C002.mxf",
+        "R001_C001.r3d",
+    }
+    assert {file["status"] for file in manifest["files"]} == {"verified"}
+    assert manifest["clips"] == []
     assert {"checksum_pdf", "metadata_xlsx", "manifest_json", "image_pdf"} <= report_types
 
 

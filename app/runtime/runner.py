@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.parsers.braw_parser import BrawAdapter
+from app.parsers.registry import default_registry
 from app.persistence.db import Database
 from app.persistence.models import Job, SystemVolume
 from app.persistence.repositories import EventRepository, JobRepository
@@ -60,7 +60,7 @@ class RuntimeJobRunner:
             if not self._transition(job_id, JobState.PARSING):
                 return
             project_root = plan.main_project_root
-            ParseService(self.database, BrawAdapter.from_environment()).parse_job(
+            ParseService(self.database, default_registry()).parse_job(
                 job_id,
                 project_root / "01_footage",
             )

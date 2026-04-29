@@ -26,10 +26,10 @@ Python package build is validated with `python -m build`.
 macOS app bundle/signing is not complete. Blockers:
 
 - Signing identity/certificate not provided.
-- Real BRAW SDK/binary packaging requirements unknown.
-- Real sample media validation not available.
+- Real BRAW/R3D/ARRIRAW SDK or binary packaging requirements unknown.
+- Real mixed-format sample media validation not available.
 
-Next concrete packaging step: choose a macOS packaging tool and verify how the BRAW adapter command/SDK may be distributed under its license.
+Next concrete packaging step: choose a macOS packaging tool and verify how format adapter commands/SDKs may be distributed under their licenses.
 
 ## Security Posture
 

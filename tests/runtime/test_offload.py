@@ -18,6 +18,12 @@ def _write_source(root: Path) -> None:
     (root / "A001").mkdir(parents=True)
     (root / "A001" / "A001_C001.braw").write_bytes(b"clip-one")
     (root / "A001" / "A001_C002.braw").write_bytes(b"clip-two")
+    (root / "R001").mkdir(parents=True)
+    (root / "R001" / "R001_C001.r3d").write_bytes(b"red-raw")
+    (root / "ARRI").mkdir(parents=True)
+    (root / "ARRI" / "ALEXA_C001.ari").write_bytes(b"arriraw-ari")
+    (root / "ARRI" / "ALEXA_C002.mxf").write_bytes(b"arriraw-mxf")
+    (root / "notes.txt").write_bytes(b"unsupported")
     (root / ".DS_Store").write_bytes(b"ignored")
     (root / "._A001_C003.braw").write_bytes(b"ignored")
 
@@ -31,6 +37,9 @@ def test_scan_source_filters_supported_files(tmp_path) -> None:
     assert [file.relpath.as_posix() for file in files] == [
         "A001/A001_C001.braw",
         "A001/A001_C002.braw",
+        "ARRI/ALEXA_C001.ari",
+        "ARRI/ALEXA_C002.mxf",
+        "R001/R001_C001.r3d",
     ]
 
 
@@ -52,6 +61,9 @@ def test_offload_success_copies_main_backup_and_persists_results(tmp_path) -> No
 
     assert result.state is JobState.COMPLETED
     assert (tmp_path / "main/Project/01_footage/A001/A001_C001.braw").exists()
+    assert (tmp_path / "main/Project/01_footage/R001/R001_C001.r3d").exists()
+    assert (tmp_path / "main/Project/01_footage/ARRI/ALEXA_C001.ari").exists()
+    assert (tmp_path / "main/Project/01_footage/ARRI/ALEXA_C002.mxf").exists()
     assert (tmp_path / "backup/Project/01_footage/A001/A001_C002.braw").exists()
     assert (tmp_path / "main/Project/00_master/reports").is_dir()
 
@@ -61,7 +73,7 @@ def test_offload_success_copies_main_backup_and_persists_results(tmp_path) -> No
 
     assert job is not None
     assert job.state == "COMPLETED"
-    assert len(files) == 2
+    assert len(files) == 5
     assert {file.status for file in files} == {"verified"}
     assert all(file.checksum_source == file.checksum_main == file.checksum_backup for file in files)
 

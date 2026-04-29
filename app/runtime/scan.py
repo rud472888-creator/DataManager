@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-SUPPORTED_SUFFIXES = frozenset({".braw"})
+from app.runtime.media_formats import SUPPORTED_SUFFIXES
+
 EXCLUDED_NAMES = frozenset({".DS_Store"})
 
 

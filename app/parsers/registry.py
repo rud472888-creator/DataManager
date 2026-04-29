@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from app.parsers.base import Parser
 from app.parsers.braw_parser import BrawAdapter, MockBrawParser
+from app.parsers.unavailable import arriraw_unavailable_parser, r3d_unavailable_parser
 
 
 @dataclass
@@ -35,6 +36,8 @@ def default_registry(*, include_mock: bool = False) -> ParserRegistry:
 
     registry = ParserRegistry()
     registry.register(BrawAdapter.from_environment())
+    registry.register(r3d_unavailable_parser())
+    registry.register(arriraw_unavailable_parser())
     if include_mock:
         registry.register(MockBrawParser())
     return registry

@@ -15,6 +15,9 @@ def client(monkeypatch, tmp_path) -> TestClient:
     source = tmp_path / "source"
     source.mkdir()
     (source / "A001_C001.braw").write_bytes(b"clip")
+    (source / "R001_C001.r3d").write_bytes(b"red")
+    (source / "ALEXA_C001.ari").write_bytes(b"arri")
+    (source / "ALEXA_C002.mxf").write_bytes(b"arri-mxf")
     monkeypatch.setenv("FDM_DATABASE_PATH", str(tmp_path / "fdm.sqlite3"))
     monkeypatch.setenv("FDM_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("FDM_DEV_SOURCE_ROOT", str(source))
@@ -34,6 +37,17 @@ def test_runtime_status_payload(client: TestClient) -> None:
     assert payload["capabilities"]["checksum"] == "available"
     assert payload["capabilities"]["braw_metadata"] == "unavailable"
     assert payload["capabilities"]["braw_frame_capture"] == "unavailable"
+    assert payload["capabilities"]["r3d_metadata"] == "unavailable"
+    assert payload["capabilities"]["r3d_frame_capture"] == "unavailable"
+    assert payload["capabilities"]["arriraw_metadata"] == "unavailable"
+    assert payload["capabilities"]["arriraw_frame_capture"] == "unavailable"
+    assert payload["capabilities"]["supported_offload_formats"] == ["BRAW", "R3D", "ARRIRAW"]
+    assert payload["capabilities"]["supported_offload_suffixes"] == [
+        ".ari",
+        ".braw",
+        ".mxf",
+        ".r3d",
+    ]
     assert payload["messages"][0] == "local runtime online"
 
 

@@ -57,7 +57,7 @@ Recommended HTTP status mapping:
 
 ### `GET /api/runtime/status`
 
-Response: `RuntimeStatus`. It includes runtime online/degraded/offline state, version, platform, active job ID, capabilities, and operator messages. BRAW capability values must be truthful: `available`, `unavailable`, or `unknown`.
+Response: `RuntimeStatus`. It includes runtime online/degraded/offline state, version, platform, active job ID, capabilities, supported offload formats/suffixes, and operator messages. Parser capability values must be truthful: `available`, `unavailable`, `partial`, or `unknown`.
 
 ### `GET /api/volumes`
 
@@ -171,7 +171,13 @@ Settings include token status, allowed destination roots by runtime-managed ID, 
   "capabilities": {
     "braw_metadata": "unknown",
     "braw_frame_capture": "unknown",
-    "checksum": "available"
+    "r3d_metadata": "unavailable",
+    "r3d_frame_capture": "unavailable",
+    "arriraw_metadata": "unavailable",
+    "arriraw_frame_capture": "unavailable",
+    "checksum": "available",
+    "supported_offload_formats": ["BRAW", "R3D", "ARRIRAW"],
+    "supported_offload_suffixes": [".ari", ".braw", ".mxf", ".r3d"]
   },
   "messages": []
 }
