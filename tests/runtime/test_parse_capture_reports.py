@@ -1,5 +1,6 @@
 import json
 import zipfile
+from xml.etree import ElementTree
 
 from app.parsers.braw_parser import BrawAdapter, MockBrawParser
 from app.persistence.db import Database
@@ -9,6 +10,8 @@ from app.runtime.capture import CaptureService
 from app.runtime.offload import DestinationPlan, OffloadService
 from app.runtime.parse import ParseService
 from app.runtime.reports import ReportService
+
+REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
 
 def _source_tree(tmp_path):
@@ -90,8 +93,17 @@ def test_report_generation_persists_ready_and_unavailable_artifacts(tmp_path) ->
     assert reports["metadata_xlsx"].status == "ready"
     assert reports["manifest_json"].status == "ready"
     assert reports["image_pdf"].status == "unavailable"
-    assert (project_root / "00_master/reports/checksum.pdf").read_bytes().startswith(b"%PDF")
-    assert zipfile.is_zipfile(project_root / "00_master/reports/metadata.xlsx")
+    checksum_pdf = project_root / "00_master/reports/checksum.pdf"
+    metadata_xlsx = project_root / "00_master/reports/metadata.xlsx"
+    pdf_bytes = checksum_pdf.read_bytes()
+    assert pdf_bytes.startswith(b"%PDF")
+    assert b"startxref" in pdf_bytes
+    assert b"trailer" in pdf_bytes
+    assert b"/BaseFont /Helvetica" in pdf_bytes
+    assert b"Source SHA256" in pdf_bytes
+    _assert_pdf_startxref_points_to_xref(pdf_bytes)
+    assert zipfile.is_zipfile(metadata_xlsx)
+    _assert_xlsx_has_required_open_xml_parts(metadata_xlsx)
     manifest = json.loads((project_root / "00_master/manifests/manifest.json").read_text())
     assert manifest["job_id"] == job_id
     assert len(manifest["clips"]) == 1
@@ -106,3 +118,33 @@ def test_report_generation_persists_ready_and_unavailable_artifacts(tmp_path) ->
         "manifest_json",
         "metadata_xlsx",
     }
+
+
+def _assert_pdf_startxref_points_to_xref(pdf_bytes: bytes) -> None:
+    startxref = int(pdf_bytes.rsplit(b"startxref\n", maxsplit=1)[1].splitlines()[0])
+    assert pdf_bytes[startxref : startxref + 4] == b"xref"
+
+
+def _assert_xlsx_has_required_open_xml_parts(path) -> None:
+    required_parts = {
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "docProps/app.xml",
+        "docProps/core.xml",
+        "xl/workbook.xml",
+        "xl/_rels/workbook.xml.rels",
+        "xl/worksheets/sheet1.xml",
+    }
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        assert required_parts <= names
+        for part in required_parts:
+            ElementTree.fromstring(archive.read(part))
+
+        workbook = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+        sheet = workbook.find(
+            "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheets/"
+            "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheet"
+        )
+        assert sheet is not None
+        assert sheet.attrib[f"{{{REL_NS}}}id"] == "rId1"
