@@ -12,17 +12,28 @@ from app.runtime.lifecycle import JobCreateRequest
 
 @pytest.fixture()
 def client(monkeypatch, tmp_path) -> TestClient:
-    source = tmp_path / "source"
-    source.mkdir()
+    scan_root = tmp_path / "Volumes"
+    source = scan_root / "CameraCard"
+    source.mkdir(parents=True)
     (source / "A001_C001.braw").write_bytes(b"clip")
     (source / "R001_C001.r3d").write_bytes(b"red")
     (source / "ALEXA_C001.ari").write_bytes(b"arri")
     (source / "ALEXA_C002.mxf").write_bytes(b"arri-mxf")
+    (source / "B001_C001.mov").write_bytes(b"quicktime")
+    (source / "B001_C002.mp4").write_bytes(b"mpeg-4")
+    (scan_root / "MainRAID").mkdir()
+    (scan_root / ".timemachine").mkdir()
+    (scan_root / "Macintosh HD").mkdir()
     monkeypatch.setenv("FDM_DATABASE_PATH", str(tmp_path / "fdm.sqlite3"))
     monkeypatch.setenv("FDM_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("FDM_DEV_SOURCE_ROOT", str(source))
+    monkeypatch.setenv("FDM_VOLUME_SCAN_ROOT", str(scan_root))
     monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", str(tmp_path / "main"))
     return TestClient(create_app())
+
+
+def _volume_ids(client: TestClient) -> tuple[str, str]:
+    payload = client.get("/api/volumes").json()
+    return payload["sources"][0]["volume_id"], payload["destinations"][0]["volume_id"]
 
 
 def test_runtime_status_payload(client: TestClient) -> None:
@@ -35,10 +46,17 @@ def test_runtime_status_payload(client: TestClient) -> None:
     assert payload["platform"] == "macOS"
     assert payload["active_job_id"] is None
     assert payload["capabilities"]["checksum"] == "available"
-    assert payload["capabilities"]["supported_offload_formats"] == ["BRAW", "R3D", "ARRIRAW"]
+    assert payload["capabilities"]["supported_offload_formats"] == [
+        "BRAW",
+        "R3D",
+        "ARRIRAW",
+        "STANDARD_VIDEO",
+    ]
     assert payload["capabilities"]["supported_offload_suffixes"] == [
         ".ari",
         ".braw",
+        ".mov",
+        ".mp4",
         ".mxf",
         ".r3d",
     ]
@@ -47,11 +65,12 @@ def test_runtime_status_payload(client: TestClient) -> None:
 
 
 def test_runtime_status_reports_persisted_active_job(client: TestClient) -> None:
+    source_id, dest_id = _volume_ids(client)
     job = client.app.state.agent.lifecycle.create_job(
         JobCreateRequest(
             project_name="Status",
-            source_volume_id="mock-source",
-            dest_main_id="dest-0",
+            source_volume_id=source_id,
+            dest_main_id=dest_id,
             dest_backup_id=None,
             operator_origin="test",
             policy={},
@@ -63,13 +82,25 @@ def test_runtime_status_reports_persisted_active_job(client: TestClient) -> None
     assert response.json()["active_job_id"] == job.job_id
 
 
-def test_volumes_are_runtime_owned_mock_candidates(client: TestClient) -> None:
+def test_volumes_are_runtime_owned_candidates(client: TestClient) -> None:
     response = client.get("/api/volumes")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["sources"][0]["volume_id"] == "mock-source"
-    assert payload["destinations"][0]["volume_id"].startswith("dest-")
+    source_ids = {volume["volume_id"] for volume in payload["sources"]}
+    destination_ids = {volume["volume_id"] for volume in payload["destinations"]}
+    all_paths = {
+        volume["display_path"] for volume in payload["sources"] + payload["destinations"]
+    }
+
+    assert "src-cameracard" in source_ids
+    assert "dest-mainraid" in destination_ids
+    assert not any(path.endswith(".timemachine") for path in all_paths)
+    assert not any(path.endswith("Macintosh HD") for path in all_paths)
+    assert all(
+        volume["bytes_available"] is None or isinstance(volume["bytes_available"], int)
+        for volume in payload["sources"] + payload["destinations"]
+    )
 
 
 def test_console_home_shell_loads(client: TestClient) -> None:
@@ -102,11 +133,12 @@ def test_settings_requires_token(client: TestClient) -> None:
 
 
 def test_command_auth_and_decision(client: TestClient) -> None:
+    source_id, dest_id = _volume_ids(client)
     job = client.app.state.agent.lifecycle.create_job(
         JobCreateRequest(
             project_name="API Test",
-            source_volume_id="mock-source",
-            dest_main_id="dest-0",
+            source_volume_id=source_id,
+            dest_main_id=dest_id,
             dest_backup_id=None,
             operator_origin="remote_web",
             policy={},

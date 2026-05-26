@@ -170,8 +170,8 @@ Settings include token status, allowed destination roots by runtime-managed ID, 
   "active_job_id": null,
   "capabilities": {
     "checksum": "available",
-    "supported_offload_formats": ["BRAW", "R3D", "ARRIRAW"],
-    "supported_offload_suffixes": [".ari", ".braw", ".mxf", ".r3d"]
+    "supported_offload_formats": ["BRAW", "R3D", "ARRIRAW", "STANDARD_VIDEO"],
+    "supported_offload_suffixes": [".ari", ".braw", ".mov", ".mp4", ".mxf", ".r3d"]
   },
   "messages": []
 }

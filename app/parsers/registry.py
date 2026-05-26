@@ -6,7 +6,11 @@ from dataclasses import dataclass, field
 
 from app.parsers.base import Parser
 from app.parsers.braw_parser import BrawAdapter, MockBrawParser
-from app.parsers.unavailable import arriraw_unavailable_parser, r3d_unavailable_parser
+from app.parsers.unavailable import (
+    arriraw_unavailable_parser,
+    r3d_unavailable_parser,
+)
+from app.parsers.standard_video_parser import StandardVideoParser
 
 
 @dataclass
@@ -38,6 +42,7 @@ def default_registry(*, include_mock: bool = False) -> ParserRegistry:
     registry.register(BrawAdapter.from_environment())
     registry.register(r3d_unavailable_parser())
     registry.register(arriraw_unavailable_parser())
+    registry.register(StandardVideoParser.from_environment())
     if include_mock:
         registry.register(MockBrawParser())
     return registry

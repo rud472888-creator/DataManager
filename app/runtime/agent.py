@@ -16,7 +16,7 @@ from app.runtime.media_formats import supported_format_names, supported_suffixes
 from app.runtime.recovery import RecoveryLoader
 from app.runtime.runner import RuntimeJobRunner
 from app.runtime.scheduler import SingleActiveJobScheduler
-from app.runtime.volume_monitor import MockVolumeProvider, VolumeSnapshot
+from app.runtime.volume_monitor import MacOSVolumeProvider, VolumeSnapshot
 
 
 @dataclass
@@ -30,9 +30,10 @@ class RuntimeAgent:
     def __post_init__(self) -> None:
         self.events = MemoryEventPublisher()
         self.scheduler = SingleActiveJobScheduler()
-        self.volume_provider = MockVolumeProvider(
+        self.volume_provider = MacOSVolumeProvider(
+            self.settings.volume_scan_root,
             self.settings.allowed_dest_roots,
-            self.settings.dev_source_root,
+            (self.settings.dev_source_root,),
         )
         self.lifecycle = JobLifecycleService(self.database)
         self.recovery = RecoveryLoader(self.lifecycle)
@@ -43,7 +44,7 @@ class RuntimeAgent:
         )
 
     def initialize(self) -> None:
-        """Apply migrations and seed safe mock volume data."""
+        """Apply migrations and seed discovered volume data."""
 
         with self.database.session() as connection:
             apply_migrations(connection)

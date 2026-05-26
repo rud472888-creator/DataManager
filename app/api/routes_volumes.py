@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends
 
 from app.api.deps import get_agent
-from app.api.schemas import VolumeListPayload, VolumePayload
+from app.api.schemas import VolumeListPayload, VolumePayload, VolumeStatus
 from app.persistence.models import SystemVolume
 from app.runtime.agent import RuntimeAgent
 
@@ -20,7 +20,7 @@ def _volume_payload(volume: SystemVolume) -> VolumePayload:
         "volume_id": volume.volume_id,
         "label": volume.label,
         "kind": "source" if volume.kind == "source" else "destination",
-        "status": "available",
+        "status": cast(VolumeStatus, volume.status),
         "display_path": volume.display_path,
         "bytes_available": volume.bytes_available,
     }
@@ -28,7 +28,7 @@ def _volume_payload(volume: SystemVolume) -> VolumePayload:
 
 @router.get("")
 def list_volumes(agent: AgentDep) -> VolumeListPayload:
-    """Return runtime-owned mock volumes."""
+    """Return runtime-owned volume candidates."""
 
     snapshot = agent.volume_snapshot()
     return {

@@ -33,8 +33,8 @@ class ReportService:
         job_id: str,
         project_root: Path,
     ) -> ReportResult:
-        report_root = project_root / "00_master" / "reports"
-        manifest_root = project_root / "00_master" / "manifests"
+        report_root = project_root / "00_Master" / "reports"
+        manifest_root = project_root / "00_Master" / "manifests"
         report_root.mkdir(parents=True, exist_ok=True)
         manifest_root.mkdir(parents=True, exist_ok=True)
         with self.database.session() as connection:
@@ -66,7 +66,7 @@ def _write_checksum_pdf(job_id: str, report_root: Path, files: list[JobFile]) ->
             lines.append(f"Error: {file.error_code or '-'} {file.error_message or ''}".strip())
         lines.append("")
     _write_simple_pdf(path, lines)
-    return _ready_report(job_id, "checksum_pdf", "00_master/reports/checksum.pdf", path)
+    return _ready_report(job_id, "checksum_pdf", "00_Master/reports/checksum.pdf", path)
 
 
 def _write_manifest(
@@ -80,7 +80,7 @@ def _write_manifest(
         "files": [file.__dict__ for file in files],
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    return _ready_report(job_id, "manifest_json", "00_master/manifests/manifest.json", path)
+    return _ready_report(job_id, "manifest_json", "00_Master/manifests/manifest.json", path)
 
 
 def _ready_report(job_id: str, report_type: str, relpath: str, path: Path) -> Report:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
@@ -24,6 +25,7 @@ class DestinationPlan:
     project_name: str
     main_root: Path
     backup_root: Path | None
+    footage_run_name: str | None = None
 
     @property
     def main_project_root(self) -> Path:
@@ -32,6 +34,25 @@ class DestinationPlan:
     @property
     def backup_project_root(self) -> Path | None:
         return self.backup_root / self.project_name if self.backup_root else None
+
+
+PROJECT_FOLDERS = (
+    Path("00_Master"),
+    Path("01_Footage"),
+    Path("02_Comp"),
+    Path("03_2D_Design"),
+    Path("04_Color"),
+    Path("05_Sound"),
+    Path("06_FIN"),
+    Path("07_ETC_DATA"),
+)
+MASTER_SUBFOLDERS = (
+    Path("00_Master/reports"),
+    Path("00_Master/manifests"),
+    Path("00_Master/logs"),
+)
+FOOTAGE_FOLDER = Path("01_Footage")
+RUN_FOLDER_PATTERN = re.compile(r"^R#([1-9][0-9]*)$")
 
 
 @dataclass(frozen=True)
@@ -43,17 +64,30 @@ class OffloadResult:
 
 
 def create_destination_scaffold(project_root: Path) -> None:
-    for relpath in (
-        Path("00_master/reports"),
-        Path("00_master/manifests"),
-        Path("00_master/logs"),
-        Path("01_footage"),
-    ):
+    for relpath in PROJECT_FOLDERS + MASTER_SUBFOLDERS:
         (project_root / relpath).mkdir(parents=True, exist_ok=True)
 
 
-def target_for(project_root: Path, scanned_file: ScannedFile) -> Path:
-    return project_root / "01_footage" / scanned_file.relpath
+def target_for(project_root: Path, run_name: str, scanned_file: ScannedFile) -> Path:
+    return project_root / FOOTAGE_FOLDER / run_name / scanned_file.relpath
+
+
+def next_footage_run_name(plan: DestinationPlan) -> str:
+    highest = 0
+    project_roots = [plan.main_project_root]
+    if plan.backup_project_root is not None:
+        project_roots.append(plan.backup_project_root)
+    for project_root in project_roots:
+        footage_root = project_root / FOOTAGE_FOLDER
+        if not footage_root.exists():
+            continue
+        for child in footage_root.iterdir():
+            if not child.is_dir():
+                continue
+            match = RUN_FOLDER_PATTERN.match(child.name)
+            if match:
+                highest = max(highest, int(match.group(1)))
+    return f"R#{highest + 1}"
 
 
 class OffloadService:
@@ -81,15 +115,19 @@ class OffloadService:
                 "no supported files found",
                 finalize_state,
             )
+        active_plan = replace(
+            plan,
+            footage_run_name=plan.footage_run_name or next_footage_run_name(plan),
+        )
         try:
-            self._prepare_destinations(plan, scanned_files)
+            self._prepare_destinations(active_plan, scanned_files)
         except OffloadError as exc:
             return self._fail_job(job_id, "destination_error", str(exc), finalize_state)
 
         results: list[JobFile] = []
         saw_backup_failure = False
         for scanned_file in scanned_files:
-            result = self._copy_one(job_id, scanned_file, plan)
+            result = self._copy_one(job_id, scanned_file, active_plan)
             results.append(result)
             if result.status == "failed":
                 return self._finish_job(
@@ -110,22 +148,30 @@ class OffloadService:
         plan: DestinationPlan,
         scanned_files: list[ScannedFile],
     ) -> None:
+        if plan.footage_run_name is None:
+            raise OffloadError("footage run name was not resolved")
         create_destination_scaffold(plan.main_project_root)
         if plan.backup_project_root is not None:
             create_destination_scaffold(plan.backup_project_root)
         for scanned_file in scanned_files:
-            targets = [target_for(plan.main_project_root, scanned_file)]
+            targets = [target_for(plan.main_project_root, plan.footage_run_name, scanned_file)]
             if plan.backup_project_root is not None:
-                targets.append(target_for(plan.backup_project_root, scanned_file))
+                targets.append(
+                    target_for(plan.backup_project_root, plan.footage_run_name, scanned_file)
+                )
             for target in targets:
                 if target.exists():
                     raise OffloadError(f"target collision blocks overwrite: {target}")
 
     def _copy_one(self, job_id: str, scanned_file: ScannedFile, plan: DestinationPlan) -> JobFile:
+        if plan.footage_run_name is None:
+            raise OffloadError("footage run name was not resolved")
         source_checksum = sha256_file(scanned_file.path)
-        main_target = target_for(plan.main_project_root, scanned_file)
+        main_target = target_for(plan.main_project_root, plan.footage_run_name, scanned_file)
         backup_target = (
-            target_for(plan.backup_project_root, scanned_file) if plan.backup_project_root else None
+            target_for(plan.backup_project_root, plan.footage_run_name, scanned_file)
+            if plan.backup_project_root
+            else None
         )
         try:
             main_checksum = _copy_and_hash(scanned_file.path, main_target)
@@ -143,7 +189,7 @@ class OffloadService:
                 job_id,
                 scanned_file,
                 status="failed",
-                dest_main_relpath=_output_relpath(scanned_file),
+                dest_main_relpath=_output_relpath(scanned_file, plan.footage_run_name),
                 checksum_source=source_checksum,
                 checksum_main=main_checksum,
                 error_code="main_checksum_mismatch",
@@ -170,8 +216,10 @@ class OffloadService:
             job_id,
             scanned_file,
             status=backup_status,
-            dest_main_relpath=_output_relpath(scanned_file),
-            dest_backup_relpath=_output_relpath(scanned_file) if backup_target else None,
+            dest_main_relpath=_output_relpath(scanned_file, plan.footage_run_name),
+            dest_backup_relpath=_output_relpath(scanned_file, plan.footage_run_name)
+            if backup_target
+            else None,
             checksum_source=source_checksum,
             checksum_main=main_checksum,
             checksum_backup=backup_checksum,
@@ -253,5 +301,5 @@ def _job_file(
     )
 
 
-def _output_relpath(scanned_file: ScannedFile) -> str:
-    return (Path("01_footage") / scanned_file.relpath).as_posix()
+def _output_relpath(scanned_file: ScannedFile, run_name: str) -> str:
+    return (FOOTAGE_FOLDER / run_name / scanned_file.relpath).as_posix()

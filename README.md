@@ -45,7 +45,8 @@ The demo script applies migrations and prints the local server command plus the 
 
 ## Current Capability Status
 
-- API-created synthetic `.braw`, `.r3d`, `.ari`, and `.mxf` fixture jobs run through offload/copy/checksum/report generation and are tested.
+- API-created synthetic `.braw`, `.r3d`, `.ari`, `.mxf`, `.mov`, and `.mp4` fixture jobs run through offload/copy/checksum/report generation and are tested.
+- `.mov` and `.mp4` metadata parsing uses the runtime `ffprobe` standard-video parser when `ffprobe` is available or `FDM_FFPROBE_COMMAND` is configured.
 - The app is clone-only: metadata parsing and frame capture are outside the production job pipeline.
 - Frame capture is handled by a separate program, not this app.
 - macOS packaging/signing: documented as a release blocker, not claimed complete.

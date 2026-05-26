@@ -12,28 +12,45 @@ from app.persistence.repositories import (
 
 
 def _client(monkeypatch, tmp_path) -> TestClient:
-    source = tmp_path / "source"
-    source.mkdir()
+    scan_root = tmp_path / "Volumes"
+    source = scan_root / "CameraCard"
+    source.mkdir(parents=True)
     (source / "A001_C001.braw").write_bytes(b"clip")
     (source / "R001_C001.r3d").write_bytes(b"red")
     (source / "ALEXA_C001.ari").write_bytes(b"arri")
     (source / "ALEXA_C002.mxf").write_bytes(b"arri-mxf")
     monkeypatch.setenv("FDM_DATABASE_PATH", str(tmp_path / "fdm.sqlite3"))
     monkeypatch.setenv("FDM_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("FDM_DEV_SOURCE_ROOT", str(source))
+    monkeypatch.setenv("FDM_VOLUME_SCAN_ROOT", str(scan_root))
     monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", str(tmp_path / "main"))
     return TestClient(create_app())
 
 
+def _volume_ids(client: TestClient, main_root) -> tuple[str, str]:
+    payload = client.get("/api/volumes").json()
+    source_id = next(
+        volume["volume_id"]
+        for volume in payload["sources"]
+        if volume["label"] == "CameraCard"
+    )
+    dest_id = next(
+        volume["volume_id"]
+        for volume in payload["destinations"]
+        if volume["display_path"] == str(main_root)
+    )
+    return source_id, dest_id
+
+
 def test_protected_routes_reject_missing_token(monkeypatch, tmp_path) -> None:
     client = _client(monkeypatch, tmp_path)
+    source_id, dest_id = _volume_ids(client, tmp_path / "main")
 
     response = client.post(
         "/api/jobs",
         json={
             "project_name": "API",
-            "source_volume_id": "mock-source",
-            "dest_main_id": "dest-0",
+            "source_volume_id": source_id,
+            "dest_main_id": dest_id,
             "dest_backup_id": None,
             "operator_origin": "remote_web",
             "policy": {},
@@ -45,14 +62,15 @@ def test_protected_routes_reject_missing_token(monkeypatch, tmp_path) -> None:
 
 def test_job_create_detail_command_and_logs(monkeypatch, tmp_path) -> None:
     client = _client(monkeypatch, tmp_path)
+    source_id, dest_id = _volume_ids(client, tmp_path / "main")
 
     created = client.post(
         "/api/jobs",
         headers={"Authorization": "Bearer change-me"},
         json={
             "project_name": "API",
-            "source_volume_id": "mock-source",
-            "dest_main_id": "dest-0",
+            "source_volume_id": source_id,
+            "dest_main_id": dest_id,
             "dest_backup_id": None,
             "operator_origin": "remote_web",
             "policy": {},
@@ -79,17 +97,18 @@ def test_job_create_detail_command_and_logs(monkeypatch, tmp_path) -> None:
 
 def test_clips_reports_and_download_are_read_only(monkeypatch, tmp_path) -> None:
     client = _client(monkeypatch, tmp_path)
+    source_id, dest_id = _volume_ids(client, tmp_path / "main")
     database = client.app.state.agent.database
     project_root = client.app.state.agent.settings.allowed_dest_roots[0] / "API Reports"
-    artifact = project_root / "00_master/reports/checksum.pdf"
+    artifact = project_root / "00_Master/reports/checksum.pdf"
     artifact.parent.mkdir(parents=True)
     artifact.write_bytes(b"%PDF test")
 
     with database.session() as connection:
         job = JobRepository(connection).create_job(
             project_name="API Reports",
-            source_volume_id="mock-source",
-            dest_main_id="dest-0",
+            source_volume_id=source_id,
+            dest_main_id=dest_id,
             dest_backup_id=None,
             operator_origin="test",
         )
@@ -114,7 +133,7 @@ def test_clips_reports_and_download_are_read_only(monkeypatch, tmp_path) -> None
             report_id=deterministic_id("report", job.job_id, "checksum_pdf"),
             job_id=job.job_id,
             report_type="checksum_pdf",
-            artifact_relpath="00_master/reports/checksum.pdf",
+            artifact_relpath="00_Master/reports/checksum.pdf",
             status="ready",
         )
         JobFileRepository(connection).upsert_result(file_result)
@@ -135,14 +154,15 @@ def test_clips_reports_and_download_are_read_only(monkeypatch, tmp_path) -> None
 
 def test_job_create_runs_pipeline_and_persists_reports(monkeypatch, tmp_path) -> None:
     client = _client(monkeypatch, tmp_path)
+    source_id, dest_id = _volume_ids(client, tmp_path / "main")
 
     created = client.post(
         "/api/jobs",
         headers={"Authorization": "Bearer change-me"},
         json={
             "project_name": "Pipeline",
-            "source_volume_id": "mock-source",
-            "dest_main_id": "dest-0",
+            "source_volume_id": source_id,
+            "dest_main_id": dest_id,
             "dest_backup_id": None,
             "operator_origin": "remote_web",
             "policy": {},
