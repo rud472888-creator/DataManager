@@ -54,14 +54,19 @@ def _write_checksum_pdf(job_id: str, report_root: Path, files: list[JobFile]) ->
         lines.extend(
             [
                 f"File: {file.source_relpath}",
+                f"Source path: {file.source_path_id}",
                 f"Status: {file.status} | Size: {file.size_bytes} bytes",
                 f"Source SHA256: {file.checksum_source or '-'}",
-                f"Main SHA256:   {file.checksum_main or '-'}",
-                f"Backup SHA256: {file.checksum_backup or '-'}",
-                f"Main path: {file.dest_main_relpath or '-'}",
-                f"Backup path: {file.dest_backup_relpath or '-'}",
             ]
         )
+        for replica in file.replica_results:
+            lines.extend(
+                [
+                    f"Replica {replica.path_id} SHA256: {replica.checksum or '-'}",
+                    f"Replica {replica.path_id} path: {replica.dest_relpath or '-'}",
+                    f"Replica {replica.path_id} status: {replica.status}",
+                ]
+            )
         if file.error_code or file.error_message:
             lines.append(f"Error: {file.error_code or '-'} {file.error_message or ''}".strip())
         lines.append("")
@@ -77,10 +82,25 @@ def _write_manifest(
     path = manifest_root / "manifest.json"
     payload = {
         "job_id": job_id,
-        "files": [file.__dict__ for file in files],
+        "files": [_file_payload(file) for file in files],
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True))
     return _ready_report(job_id, "manifest_json", "00_Master/manifests/manifest.json", path)
+
+
+def _file_payload(file: JobFile) -> dict[str, object]:
+    return {
+        "file_id": file.file_id,
+        "job_id": file.job_id,
+        "source_path_id": file.source_path_id,
+        "source_relpath": file.source_relpath,
+        "size_bytes": file.size_bytes,
+        "checksum_source": file.checksum_source,
+        "status": file.status,
+        "error_code": file.error_code,
+        "error_message": file.error_message,
+        "replica_results": [replica.__dict__ for replica in file.replica_results],
+    }
 
 
 def _ready_report(job_id: str, report_type: str, relpath: str, path: Path) -> Report:

@@ -1,4 +1,4 @@
-"""Repository boundaries for Stage 3 persistence."""
+"""Repository boundaries for runtime persistence."""
 
 from __future__ import annotations
 
@@ -6,7 +6,16 @@ import json
 import sqlite3
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from app.persistence.models import Clip, Job, JobEvent, JobFile, Report, SettingRecord, SystemVolume
+from app.persistence.models import (
+    Clip,
+    Job,
+    JobEvent,
+    JobFile,
+    JobFileReplica,
+    Report,
+    SettingRecord,
+    SystemVolume,
+)
 from app.runtime.state_machine import RECOVERABLE_STATES, JobState
 
 
@@ -20,18 +29,16 @@ class JobRepository:
         self,
         *,
         project_name: str,
-        source_volume_id: str,
-        dest_main_id: str,
-        dest_backup_id: str | None,
+        source_path_ids: tuple[str, ...],
+        replica_path_ids: tuple[str, ...],
         operator_origin: str,
         policy: dict[str, object] | None = None,
     ) -> Job:
         job = Job(
             job_id=f"JOB-{uuid4().hex[:12]}",
             project_name=project_name,
-            source_volume_id=source_volume_id,
-            dest_main_id=dest_main_id,
-            dest_backup_id=dest_backup_id,
+            source_path_ids=source_path_ids,
+            replica_path_ids=replica_path_ids,
             state="QUEUED",
             operator_origin=operator_origin,
             policy_json=json.dumps(policy or {}),
@@ -39,17 +46,16 @@ class JobRepository:
         self.connection.execute(
             """
             INSERT INTO jobs (
-              job_id, project_name, source_volume_id, dest_main_id, dest_backup_id,
+              job_id, project_name, source_path_ids_json, replica_path_ids_json,
               state, operator_origin, policy_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_id,
                 job.project_name,
-                job.source_volume_id,
-                job.dest_main_id,
-                job.dest_backup_id,
+                json.dumps(list(job.source_path_ids)),
+                json.dumps(list(job.replica_path_ids)),
                 job.state,
                 job.operator_origin,
                 job.policy_json,
@@ -60,16 +66,15 @@ class JobRepository:
     def create_stub_job(self, project_name: str = "Foundation Job") -> Job:
         return self.create_job(
             project_name=project_name,
-            source_volume_id="mock-source",
-            dest_main_id="mock-main",
-            dest_backup_id="mock-backup",
+            source_path_ids=("mock-source",),
+            replica_path_ids=("path1", "path2"),
             operator_origin="local_runtime",
         )
 
     def get(self, job_id: str) -> Job | None:
         row = self.connection.execute(
             """
-            SELECT job_id, project_name, source_volume_id, dest_main_id, dest_backup_id,
+            SELECT job_id, project_name, source_path_ids_json, replica_path_ids_json,
                    state, operator_origin, current_step, stats_json, policy_json,
                    recovery_cursor_json
             FROM jobs
@@ -82,7 +87,7 @@ class JobRepository:
     def list_all(self) -> list[Job]:
         rows = self.connection.execute(
             """
-            SELECT job_id, project_name, source_volume_id, dest_main_id, dest_backup_id,
+            SELECT job_id, project_name, source_path_ids_json, replica_path_ids_json,
                    state, operator_origin, current_step, stats_json, policy_json,
                    recovery_cursor_json
             FROM jobs
@@ -127,7 +132,7 @@ class JobRepository:
         placeholders = ",".join("?" for _ in states)
         rows = self.connection.execute(
             f"""
-            SELECT job_id, project_name, source_volume_id, dest_main_id, dest_backup_id,
+            SELECT job_id, project_name, source_path_ids_json, replica_path_ids_json,
                    state, operator_origin, current_step, stats_json, policy_json,
                    recovery_cursor_json
             FROM jobs
@@ -271,7 +276,7 @@ class VolumeRepository:
 
 
 class JobFileRepository:
-    """Persistence operations for file-level offload results."""
+    """Persistence operations for file-level replication results."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -280,18 +285,15 @@ class JobFileRepository:
         self.connection.execute(
             """
             INSERT INTO job_files (
-              file_id, job_id, source_relpath, dest_main_relpath, dest_backup_relpath,
-              size_bytes, checksum_source, checksum_main, checksum_backup, status,
-              error_code, error_message
+              file_id, job_id, source_path_id, source_relpath, size_bytes,
+              checksum_source, status, error_code, error_message
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(file_id) DO UPDATE SET
-              dest_main_relpath = excluded.dest_main_relpath,
-              dest_backup_relpath = excluded.dest_backup_relpath,
+              source_path_id = excluded.source_path_id,
+              source_relpath = excluded.source_relpath,
               size_bytes = excluded.size_bytes,
               checksum_source = excluded.checksum_source,
-              checksum_main = excluded.checksum_main,
-              checksum_backup = excluded.checksum_backup,
               status = excluded.status,
               error_code = excluded.error_code,
               error_message = excluded.error_message,
@@ -300,33 +302,79 @@ class JobFileRepository:
             (
                 result.file_id,
                 result.job_id,
+                result.source_path_id,
                 result.source_relpath,
-                result.dest_main_relpath,
-                result.dest_backup_relpath,
                 result.size_bytes,
                 result.checksum_source,
-                result.checksum_main,
-                result.checksum_backup,
                 result.status,
                 result.error_code,
                 result.error_message,
             ),
+        )
+        self.connection.executemany(
+            """
+            INSERT INTO job_file_replicas (
+              file_id, path_id, dest_relpath, checksum, status, error_code, error_message
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(file_id, path_id) DO UPDATE SET
+              dest_relpath = excluded.dest_relpath,
+              checksum = excluded.checksum,
+              status = excluded.status,
+              error_code = excluded.error_code,
+              error_message = excluded.error_message,
+              updated_at = CURRENT_TIMESTAMP
+            """,
+            [
+                (
+                    replica.file_id,
+                    replica.path_id,
+                    replica.dest_relpath,
+                    replica.checksum,
+                    replica.status,
+                    replica.error_code,
+                    replica.error_message,
+                )
+                for replica in result.replica_results
+            ],
         )
         return result
 
     def list_for_job(self, job_id: str) -> list[JobFile]:
         rows = self.connection.execute(
             """
-            SELECT file_id, job_id, source_relpath, dest_main_relpath, dest_backup_relpath,
-                   size_bytes, checksum_source, checksum_main, checksum_backup, status,
-                   error_code, error_message
+            SELECT file_id, job_id, source_path_id, source_relpath, size_bytes,
+                   checksum_source, status, error_code, error_message
             FROM job_files
             WHERE job_id = ?
-            ORDER BY source_relpath ASC
+            ORDER BY source_path_id ASC, source_relpath ASC
             """,
             (job_id,),
         ).fetchall()
-        return [_job_file_from_row(row) for row in rows]
+        files = [_job_file_from_row(row) for row in rows]
+        if not files:
+            return []
+        replica_rows = self.connection.execute(
+            f"""
+            SELECT file_id, path_id, dest_relpath, checksum, status, error_code, error_message
+            FROM job_file_replicas
+            WHERE file_id IN ({",".join("?" for _ in files)})
+            ORDER BY path_id ASC
+            """,
+            [file.file_id for file in files],
+        ).fetchall()
+        replicas_by_file: dict[str, list[JobFileReplica]] = {file.file_id: [] for file in files}
+        for row in replica_rows:
+            replicas_by_file[str(row["file_id"])].append(_replica_from_row(row))
+        return [
+            JobFile(
+                **{
+                    **file.__dict__,
+                    "replica_results": tuple(replicas_by_file[file.file_id]),
+                }
+            )
+            for file in files
+        ]
 
 
 class ClipRepository:
@@ -453,9 +501,8 @@ def _job_from_row(row: sqlite3.Row) -> Job:
     return Job(
         job_id=str(row["job_id"]),
         project_name=str(row["project_name"]),
-        source_volume_id=str(row["source_volume_id"]),
-        dest_main_id=str(row["dest_main_id"]),
-        dest_backup_id=str(row["dest_backup_id"]) if row["dest_backup_id"] is not None else None,
+        source_path_ids=tuple(json.loads(str(row["source_path_ids_json"]))),
+        replica_path_ids=tuple(json.loads(str(row["replica_path_ids_json"]))),
         state=str(row["state"]),
         operator_origin=str(row["operator_origin"]),
         current_step=str(row["current_step"]) if row["current_step"] is not None else None,
@@ -471,17 +518,22 @@ def _job_file_from_row(row: sqlite3.Row) -> JobFile:
     return JobFile(
         file_id=str(row["file_id"]),
         job_id=str(row["job_id"]),
+        source_path_id=str(row["source_path_id"]),
         source_relpath=str(row["source_relpath"]),
-        dest_main_relpath=(
-            str(row["dest_main_relpath"]) if row["dest_main_relpath"] is not None else None
-        ),
-        dest_backup_relpath=(
-            str(row["dest_backup_relpath"]) if row["dest_backup_relpath"] is not None else None
-        ),
         size_bytes=int(row["size_bytes"]),
         checksum_source=str(row["checksum_source"]) if row["checksum_source"] is not None else None,
-        checksum_main=str(row["checksum_main"]) if row["checksum_main"] is not None else None,
-        checksum_backup=str(row["checksum_backup"]) if row["checksum_backup"] is not None else None,
+        status=str(row["status"]),
+        error_code=str(row["error_code"]) if row["error_code"] is not None else None,
+        error_message=str(row["error_message"]) if row["error_message"] is not None else None,
+    )
+
+
+def _replica_from_row(row: sqlite3.Row) -> JobFileReplica:
+    return JobFileReplica(
+        file_id=str(row["file_id"]),
+        path_id=str(row["path_id"]),
+        dest_relpath=str(row["dest_relpath"]) if row["dest_relpath"] is not None else None,
+        checksum=str(row["checksum"]) if row["checksum"] is not None else None,
         status=str(row["status"]),
         error_code=str(row["error_code"]) if row["error_code"] is not None else None,
         error_message=str(row["error_message"]) if row["error_message"] is not None else None,

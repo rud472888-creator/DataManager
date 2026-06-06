@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from app.persistence.db import Database
 from app.persistence.models import Job, SystemVolume
 from app.persistence.repositories import EventRepository, JobRepository
 from app.runtime.lifecycle import JobLifecycleService
-from app.runtime.offload import DestinationPlan, OffloadService
+from app.runtime.offload import DestinationPlan, OffloadService, ReplicaPath, SourcePath
 from app.runtime.reports import ReportService
 from app.runtime.state_machine import JobState
 from app.runtime.volume_monitor import VolumeProvider
@@ -39,14 +40,14 @@ class RuntimeJobRunner:
             if not self._transition(job_id, JobState.SCANNING):
                 return
             job = self._require_job(job_id)
-            source_root, plan = self.resolve_job_paths(job)
+            source_paths, plan = self.resolve_job_paths(job)
             if not self._transition(job_id, JobState.PREPARING):
                 return
             if not self._transition(job_id, JobState.COPYING):
                 return
             offload = OffloadService(self.database).execute(
                 job_id=job_id,
-                source_root=source_root,
+                source_paths=source_paths,
                 plan=plan,
                 finalize_state=False,
             )
@@ -55,7 +56,7 @@ class RuntimeJobRunner:
                 return
             if not self._transition(job_id, JobState.VERIFYING):
                 return
-            project_root = plan.main_project_root
+            project_root = plan.report_project_root
             if not self._transition(job_id, JobState.REPORTING):
                 return
             ReportService(self.database).generate(
@@ -69,27 +70,34 @@ class RuntimeJobRunner:
         except Exception as exc:
             self._record_failure(job_id, exc)
 
-    def resolve_job_paths(self, job: Job) -> tuple[Path, DestinationPlan]:
+    def resolve_job_paths(self, job: Job) -> tuple[tuple[SourcePath, ...], DestinationPlan]:
         volumes = {volume.volume_id: volume for volume in self._volumes()}
-        source = self._require_volume(volumes, job.source_volume_id, "source")
-        main = self._require_volume(volumes, job.dest_main_id, "destination")
-        backup = (
-            self._require_volume(volumes, job.dest_backup_id, "destination")
-            if job.dest_backup_id
-            else None
+        sources = tuple(
+            SourcePath(
+                path_id=path_id,
+                root=Path(self._require_volume(volumes, path_id, "source").display_path),
+            )
+            for path_id in job.source_path_ids
+        )
+        replicas = tuple(
+            ReplicaPath(
+                path_id=path_id,
+                root=Path(self._require_volume(volumes, path_id, "destination").display_path),
+            )
+            for path_id in job.replica_path_ids
         )
         return (
-            Path(source.display_path),
+            sources,
             DestinationPlan(
                 project_name=job.project_name,
-                main_root=Path(main.display_path),
-                backup_root=Path(backup.display_path) if backup else None,
+                replica_paths=replicas,
+                footage_run_name=_policy_footage_run_name(job.policy_json),
             ),
         )
 
     def project_root_for_job(self, job: Job) -> Path:
         _, plan = self.resolve_job_paths(job)
-        return plan.main_project_root
+        return plan.report_project_root
 
     def _require_job(self, job_id: str) -> Job:
         with self.database.session() as connection:
@@ -136,3 +144,20 @@ class RuntimeJobRunner:
                 accepted=False,
                 reason=str(exc),
             )
+
+
+def _policy_footage_run_name(policy_json: str) -> str | None:
+    try:
+        policy = json.loads(policy_json or "{}")
+    except json.JSONDecodeError:
+        return None
+    value = policy.get("footage_run_name")
+    if not value:
+        return None
+    run_name = str(value)
+    path = Path(run_name)
+    if path.is_absolute() or "\\" in run_name or "\x00" in run_name:
+        return None
+    if any(part in {"", ".", ".."} for part in path.parts):
+        return None
+    return run_name

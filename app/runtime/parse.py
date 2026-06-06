@@ -36,7 +36,7 @@ class ParseService:
             for file_result in files:
                 if file_result.status not in {"verified", "warn"}:
                     continue
-                source = footage_root / file_result.source_relpath
+                source = footage_root / file_result.source_path_id / file_result.source_relpath
                 parser = self._parser_for(source)
                 if parser is None:
                     unavailable_reason = f"no parser registered for {source.suffix.lower()}"

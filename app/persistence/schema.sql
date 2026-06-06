@@ -8,9 +8,8 @@ CREATE TABLE IF NOT EXISTS schema_version (
 CREATE TABLE IF NOT EXISTS jobs (
   job_id TEXT PRIMARY KEY,
   project_name TEXT NOT NULL,
-  source_volume_id TEXT NOT NULL,
-  dest_main_id TEXT NOT NULL,
-  dest_backup_id TEXT,
+  source_path_ids_json TEXT NOT NULL,
+  replica_path_ids_json TEXT NOT NULL,
   state TEXT NOT NULL,
   current_step TEXT,
   stats_json TEXT NOT NULL DEFAULT '{}',
@@ -39,17 +38,26 @@ CREATE TABLE IF NOT EXISTS job_events (
 CREATE TABLE IF NOT EXISTS job_files (
   file_id TEXT PRIMARY KEY,
   job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+  source_path_id TEXT NOT NULL,
   source_relpath TEXT NOT NULL,
-  dest_main_relpath TEXT,
-  dest_backup_relpath TEXT,
   size_bytes INTEGER NOT NULL,
   checksum_source TEXT,
-  checksum_main TEXT,
-  checksum_backup TEXT,
   status TEXT NOT NULL,
   error_code TEXT,
   error_message TEXT,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS job_file_replicas (
+  file_id TEXT NOT NULL REFERENCES job_files(file_id) ON DELETE CASCADE,
+  path_id TEXT NOT NULL,
+  dest_relpath TEXT,
+  checksum TEXT,
+  status TEXT NOT NULL,
+  error_code TEXT,
+  error_message TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (file_id, path_id)
 );
 
 CREATE TABLE IF NOT EXISTS clips (

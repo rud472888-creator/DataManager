@@ -12,16 +12,14 @@ def test_job_repository_lists_active_and_recoverable_jobs(tmp_path) -> None:
         jobs = JobRepository(connection)
         active = jobs.create_job(
             project_name="Active",
-            source_volume_id="source",
-            dest_main_id="main",
-            dest_backup_id=None,
+            source_path_ids=("source-a", "source-b"),
+            replica_path_ids=("path1", "path2", "path3"),
             operator_origin="test",
         )
         failed = jobs.create_job(
             project_name="Failed",
-            source_volume_id="source",
-            dest_main_id="main",
-            dest_backup_id=None,
+            source_path_ids=("source-a",),
+            replica_path_ids=("path1", "path2"),
             operator_origin="test",
         )
         jobs.update_state(failed.job_id, JobState.FAILED)

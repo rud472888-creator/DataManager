@@ -12,7 +12,7 @@ def test_settings_loading_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("FDM_HOST", "0.0.0.0")
     monkeypatch.setenv("FDM_PORT", "9000")
     monkeypatch.setenv("FDM_DATABASE_PATH", ".tmp/test.sqlite3")
-    monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", "/Volumes/Main:/Volumes/Backup")
+    monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", "/Volumes/path1:/Volumes/path2")
 
     settings = load_settings()
 
@@ -20,8 +20,8 @@ def test_settings_loading_from_environment(monkeypatch) -> None:
     assert settings.port == 9000
     assert str(settings.database_path) == ".tmp/test.sqlite3"
     assert [str(path) for path in settings.allowed_dest_roots] == [
-        "/Volumes/Main",
-        "/Volumes/Backup",
+        "/Volumes/path1",
+        "/Volumes/path2",
     ]
 
 
@@ -96,8 +96,10 @@ def test_schema_enforces_foreign_keys(tmp_path) -> None:
         try:
             connection.execute(
                 """
-                INSERT INTO job_files (file_id, job_id, source_relpath, size_bytes, status)
-                VALUES ('file-1', 'missing-job', 'A001_C001.braw', 10, 'pending')
+                INSERT INTO job_files (
+                  file_id, job_id, source_path_id, source_relpath, size_bytes, status
+                )
+                VALUES ('file-1', 'missing-job', 'path1', 'A001_C001.braw', 10, 'pending')
                 """
             )
         except sqlite3.IntegrityError:

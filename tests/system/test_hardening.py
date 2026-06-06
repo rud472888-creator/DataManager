@@ -6,23 +6,12 @@ from app.api.server import create_app
 from app.persistence.db import Database
 from app.persistence.migrations import apply_migrations
 from app.persistence.repositories import JobFileRepository, JobRepository
-from app.runtime.offload import DestinationPlan, OffloadService
+from app.runtime.offload import DestinationPlan, OffloadService, ReplicaPath, SourcePath
 from app.runtime.state_machine import JobState
 
 
-def test_web_console_has_no_direct_file_authority() -> None:
-    web_files = Path("app/web_console").glob("*")
-    combined = "\n".join(path.read_text() for path in web_files if path.suffix in {".html", ".js"})
-
-    forbidden = [
-        'type="file"',
-        "showOpenFilePicker",
-        "webkitdirectory",
-        "FileSystemWritableFileStream",
-        "createWritable",
-    ]
-
-    assert all(token not in combined for token in forbidden)
+def test_web_console_static_surface_is_removed() -> None:
+    assert not Path("app/web_console").exists()
 
 
 def test_migrations_are_idempotent(tmp_path) -> None:
@@ -48,8 +37,14 @@ def test_large_fixture_offload_smoke(tmp_path) -> None:
 
     result = OffloadService(database).execute(
         job_id=job.job_id,
-        source_root=source,
-        plan=DestinationPlan("Large Fixture", tmp_path / "main", tmp_path / "backup"),
+        source_paths=(SourcePath("path1", source),),
+        plan=DestinationPlan(
+            "Large Fixture",
+            (
+                ReplicaPath("path1", tmp_path / "path1"),
+                ReplicaPath("path2", tmp_path / "path2"),
+            ),
+        ),
     )
 
     with database.session() as connection:
@@ -68,9 +63,8 @@ def test_invalid_command_and_settings_path_filter(monkeypatch, tmp_path) -> None
         headers={"Authorization": "Bearer change-me"},
         json={
             "project_name": "Hardening",
-            "source_volume_id": "mock-source",
-            "dest_main_id": "dest-0",
-            "dest_backup_id": None,
+            "source_path_ids": ["mock-source"],
+            "replica_path_ids": ["dest-0"],
             "operator_origin": "remote_web",
             "policy": {},
         },
@@ -91,10 +85,5 @@ def test_invalid_command_and_settings_path_filter(monkeypatch, tmp_path) -> None
     assert settings.json()["settings"] == {"operator_name": "op"}
 
 
-def test_console_accessibility_affordances() -> None:
-    html = Path("app/web_console/index.html").read_text()
-
-    assert 'aria-live="polite"' in html
-    assert 'aria-label="Primary"' in html
-    assert "<label>" in html
-    assert 'role="status"' in html
+def test_console_accessibility_affordances_moved_to_orchestrator() -> None:
+    assert not Path("app/web_console/index.html").exists()

@@ -34,11 +34,10 @@ packages = [
   "app.parsers",
   "app.persistence",
   "app.runtime",
-  "app.web_console",
 ]
 
 [tool.setuptools.package-data]
-app = ["web_console/*.html", "web_console/*.css", "web_console/*.js", "persistence/*.sql"]
+app = ["persistence/*.sql"]
 
 [tool.ruff]
 line-length = 100

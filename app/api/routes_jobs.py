@@ -56,9 +56,8 @@ def create_job(
         job = request.app.state.agent.lifecycle.create_job(
             JobCreateRequest(
                 project_name=payload["project_name"],
-                source_volume_id=payload["source_volume_id"],
-                dest_main_id=payload["dest_main_id"],
-                dest_backup_id=payload["dest_backup_id"],
+                source_path_ids=tuple(payload["source_path_ids"]),
+                replica_path_ids=tuple(payload["replica_path_ids"]),
                 operator_origin=payload["operator_origin"],
                 policy=payload.get("policy"),
             )
@@ -127,9 +126,8 @@ def _job_summary(job: Job) -> JobSummaryPayload:
     return {
         "job_id": job.job_id,
         "project_name": job.project_name,
-        "source_volume_id": job.source_volume_id,
-        "dest_main_id": job.dest_main_id,
-        "dest_backup_id": job.dest_backup_id,
+        "source_path_ids": list(job.source_path_ids),
+        "replica_path_ids": list(job.replica_path_ids),
         "state": job.state,
         "current_step": job.current_step,
     }

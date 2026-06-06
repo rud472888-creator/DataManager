@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.api.server import create_app
-from app.persistence.models import Clip, JobFile, Report
+from app.persistence.models import Clip, JobFile, JobFileReplica, Report
 from app.persistence.repositories import (
     ClipRepository,
     JobFileRepository,
@@ -22,36 +22,33 @@ def _client(monkeypatch, tmp_path) -> TestClient:
     monkeypatch.setenv("FDM_DATABASE_PATH", str(tmp_path / "fdm.sqlite3"))
     monkeypatch.setenv("FDM_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("FDM_VOLUME_SCAN_ROOT", str(scan_root))
-    monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", str(tmp_path / "main"))
+    monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", str(tmp_path / "replica"))
     return TestClient(create_app())
 
 
-def _volume_ids(client: TestClient, main_root) -> tuple[str, str]:
+def _volume_ids(client: TestClient, replica_root) -> tuple[str, str]:
     payload = client.get("/api/volumes").json()
     source_id = next(
-        volume["volume_id"]
-        for volume in payload["sources"]
-        if volume["label"] == "CameraCard"
+        volume["volume_id"] for volume in payload["sources"] if volume["label"] == "CameraCard"
     )
-    dest_id = next(
+    replica_id = next(
         volume["volume_id"]
         for volume in payload["destinations"]
-        if volume["display_path"] == str(main_root)
+        if volume["display_path"] == str(replica_root)
     )
-    return source_id, dest_id
+    return source_id, replica_id
 
 
 def test_protected_routes_reject_missing_token(monkeypatch, tmp_path) -> None:
     client = _client(monkeypatch, tmp_path)
-    source_id, dest_id = _volume_ids(client, tmp_path / "main")
+    source_id, replica_id = _volume_ids(client, tmp_path / "replica")
 
     response = client.post(
         "/api/jobs",
         json={
             "project_name": "API",
-            "source_volume_id": source_id,
-            "dest_main_id": dest_id,
-            "dest_backup_id": None,
+            "source_path_ids": [source_id],
+            "replica_path_ids": [replica_id],
             "operator_origin": "remote_web",
             "policy": {},
         },
@@ -62,16 +59,15 @@ def test_protected_routes_reject_missing_token(monkeypatch, tmp_path) -> None:
 
 def test_job_create_detail_command_and_logs(monkeypatch, tmp_path) -> None:
     client = _client(monkeypatch, tmp_path)
-    source_id, dest_id = _volume_ids(client, tmp_path / "main")
+    source_id, replica_id = _volume_ids(client, tmp_path / "replica")
 
     created = client.post(
         "/api/jobs",
         headers={"Authorization": "Bearer change-me"},
         json={
             "project_name": "API",
-            "source_volume_id": source_id,
-            "dest_main_id": dest_id,
-            "dest_backup_id": None,
+            "source_path_ids": [source_id],
+            "replica_path_ids": [replica_id],
             "operator_origin": "remote_web",
             "policy": {},
         },
@@ -97,7 +93,7 @@ def test_job_create_detail_command_and_logs(monkeypatch, tmp_path) -> None:
 
 def test_clips_reports_and_download_are_read_only(monkeypatch, tmp_path) -> None:
     client = _client(monkeypatch, tmp_path)
-    source_id, dest_id = _volume_ids(client, tmp_path / "main")
+    source_id, replica_id = _volume_ids(client, tmp_path / "replica")
     database = client.app.state.agent.database
     project_root = client.app.state.agent.settings.allowed_dest_roots[0] / "API Reports"
     artifact = project_root / "00_Master/reports/checksum.pdf"
@@ -107,9 +103,8 @@ def test_clips_reports_and_download_are_read_only(monkeypatch, tmp_path) -> None
     with database.session() as connection:
         job = JobRepository(connection).create_job(
             project_name="API Reports",
-            source_volume_id=source_id,
-            dest_main_id=dest_id,
-            dest_backup_id=None,
+            source_path_ids=(source_id,),
+            replica_path_ids=(replica_id,),
             operator_origin="test",
         )
         clip = Clip(
@@ -125,9 +120,19 @@ def test_clips_reports_and_download_are_read_only(monkeypatch, tmp_path) -> None
         file_result = JobFile(
             file_id="file-1",
             job_id=job.job_id,
+            source_path_id=source_id,
             source_relpath="A001/A001_C001.braw",
             size_bytes=8,
             status="verified",
+            replica_results=(
+                JobFileReplica(
+                    file_id="file-1",
+                    path_id=replica_id,
+                    dest_relpath="01_Footage/R#1/src-cameracard/A001/A001_C001.braw",
+                    checksum="abc",
+                    status="verified",
+                ),
+            ),
         )
         report = Report(
             report_id=deterministic_id("report", job.job_id, "checksum_pdf"),
@@ -154,16 +159,15 @@ def test_clips_reports_and_download_are_read_only(monkeypatch, tmp_path) -> None
 
 def test_job_create_runs_pipeline_and_persists_reports(monkeypatch, tmp_path) -> None:
     client = _client(monkeypatch, tmp_path)
-    source_id, dest_id = _volume_ids(client, tmp_path / "main")
+    source_id, replica_id = _volume_ids(client, tmp_path / "replica")
 
     created = client.post(
         "/api/jobs",
         headers={"Authorization": "Bearer change-me"},
         json={
             "project_name": "Pipeline",
-            "source_volume_id": source_id,
-            "dest_main_id": dest_id,
-            "dest_backup_id": None,
+            "source_path_ids": [source_id],
+            "replica_path_ids": [replica_id],
             "operator_origin": "remote_web",
             "policy": {},
         },
@@ -190,6 +194,39 @@ def test_job_create_runs_pipeline_and_persists_reports(monkeypatch, tmp_path) ->
     assert {file["status"] for file in manifest["files"]} == {"verified"}
     assert "clips" not in manifest
     assert report_types == {"checksum_pdf", "manifest_json"}
+
+
+def test_job_create_honors_policy_footage_run_path(monkeypatch, tmp_path) -> None:
+    client = _client(monkeypatch, tmp_path)
+    source_id, replica_id = _volume_ids(client, tmp_path / "replica")
+
+    created = client.post(
+        "/api/jobs",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "project_name": "DIT Project",
+            "source_path_ids": [source_id],
+            "replica_path_ids": [replica_id],
+            "operator_origin": "remote_web",
+            "policy": {"footage_run_name": "260528/A-cam/R#1"},
+        },
+    )
+    job_id = created.json()["job"]["job_id"]
+    reports = client.get(f"/api/jobs/{job_id}/reports")
+    manifest_url = next(
+        report["download_url"]
+        for report in reports.json()["reports"]
+        if report["report_type"] == "manifest_json"
+    )
+    manifest = client.get(manifest_url).json()
+    replica_paths = {
+        replica["dest_relpath"]
+        for file in manifest["files"]
+        for replica in file["replica_results"]
+    }
+
+    assert created.status_code == 200
+    assert all(path.startswith("01_Footage/260528/A-cam/R#1/") for path in replica_paths)
 
 
 def test_settings_patch_is_token_protected_and_filtered(monkeypatch, tmp_path) -> None:

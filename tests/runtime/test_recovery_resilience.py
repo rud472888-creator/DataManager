@@ -6,7 +6,7 @@ from app.persistence.db import Database
 from app.persistence.migrations import apply_migrations
 from app.persistence.repositories import JobRepository
 from app.runtime.lifecycle import JobCreateRequest
-from app.runtime.offload import DestinationPlan, OffloadService
+from app.runtime.offload import DestinationPlan, OffloadService, ReplicaPath, SourcePath
 from app.runtime.state_machine import JobState
 
 
@@ -18,9 +18,8 @@ def test_runtime_restart_loads_recoverable_jobs(monkeypatch, tmp_path) -> None:
     first.state.agent.lifecycle.create_job(
         JobCreateRequest(
             project_name="Recover",
-            source_volume_id="mock-source",
-            dest_main_id="dest-0",
-            dest_backup_id=None,
+            source_path_ids=("mock-source",),
+            replica_path_ids=("dest-0",),
             operator_origin="test",
             policy={},
         )
@@ -42,9 +41,8 @@ def test_log_parity_for_command_rejection(monkeypatch, tmp_path) -> None:
         headers={"Authorization": "Bearer change-me"},
         json={
             "project_name": "Parity",
-            "source_volume_id": "mock-source",
-            "dest_main_id": "dest-0",
-            "dest_backup_id": None,
+            "source_path_ids": ["mock-source"],
+            "replica_path_ids": ["dest-0"],
             "operator_origin": "remote_web",
             "policy": {},
         },
@@ -64,7 +62,7 @@ def test_log_parity_for_command_rejection(monkeypatch, tmp_path) -> None:
     )
 
 
-def test_backup_failure_path_remains_warn(tmp_path) -> None:
+def test_replica_failure_path_remains_warn(tmp_path) -> None:
     database = Database(tmp_path / "fdm.sqlite3")
     with database.session() as connection:
         apply_migrations(connection)
@@ -77,17 +75,23 @@ def test_backup_failure_path_remains_warn(tmp_path) -> None:
 
     original = offload._copy_and_hash
 
-    def fail_backup(source_path, target):
-        if "backup" in target.parts:
-            raise OSError("backup disconnected")
+    def fail_replica(source_path, target):
+        if "path2" in target.parts:
+            raise OSError("replica disconnected")
         return original(source_path, target)
 
-    offload._copy_and_hash = fail_backup
+    offload._copy_and_hash = fail_replica
     try:
         result = OffloadService(database).execute(
             job_id=job.job_id,
-            source_root=source,
-            plan=DestinationPlan("Recover", tmp_path / "main", tmp_path / "backup"),
+            source_paths=(SourcePath("path1", source),),
+            plan=DestinationPlan(
+                "Recover",
+                (
+                    ReplicaPath("path1", tmp_path / "path1"),
+                    ReplicaPath("path2", tmp_path / "path2"),
+                ),
+            ),
         )
     finally:
         offload._copy_and_hash = original

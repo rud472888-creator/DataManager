@@ -1,6 +1,6 @@
 from app.persistence.db import Database
 from app.persistence.migrations import apply_migrations
-from app.persistence.models import JobFile
+from app.persistence.models import JobFile, JobFileReplica
 from app.persistence.repositories import JobFileRepository, JobRepository
 
 
@@ -13,14 +13,27 @@ def test_job_file_repository_persists_file_level_outcomes(tmp_path) -> None:
         result = JobFile(
             file_id="file-1",
             job_id=job.job_id,
+            source_path_id="path1",
             source_relpath="A001/A001_C001.braw",
             size_bytes=10,
             status="verified",
-            dest_main_relpath="main/Project/01_Footage/R#1/A001/A001_C001.braw",
-            dest_backup_relpath="backup/Project/01_Footage/R#1/A001/A001_C001.braw",
             checksum_source="abc",
-            checksum_main="abc",
-            checksum_backup="abc",
+            replica_results=(
+                JobFileReplica(
+                    file_id="file-1",
+                    path_id="path1",
+                    dest_relpath="01_Footage/R#1/path1/A001/A001_C001.braw",
+                    checksum="abc",
+                    status="verified",
+                ),
+                JobFileReplica(
+                    file_id="file-1",
+                    path_id="path2",
+                    dest_relpath="01_Footage/R#1/path1/A001/A001_C001.braw",
+                    checksum="abc",
+                    status="verified",
+                ),
+            ),
         )
         JobFileRepository(connection).upsert_result(result)
 
@@ -29,4 +42,6 @@ def test_job_file_repository_persists_file_level_outcomes(tmp_path) -> None:
 
     assert len(files) == 1
     assert files[0].status == "verified"
-    assert files[0].checksum_source == files[0].checksum_main == files[0].checksum_backup
+    assert files[0].checksum_source == "abc"
+    assert {replica.path_id for replica in files[0].replica_results} == {"path1", "path2"}
+    assert {replica.checksum for replica in files[0].replica_results} == {"abc"}

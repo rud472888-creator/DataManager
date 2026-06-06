@@ -20,9 +20,8 @@ from app.runtime.state_machine import (
 @dataclass(frozen=True)
 class JobCreateRequest:
     project_name: str
-    source_volume_id: str
-    dest_main_id: str
-    dest_backup_id: str | None
+    source_path_ids: tuple[str, ...]
+    replica_path_ids: tuple[str, ...]
     operator_origin: str
     policy: dict[str, object] | None = None
 
@@ -45,9 +44,8 @@ class JobLifecycleService:
                 raise LifecycleError(f"single active job policy blocks new job: {active_job_id}")
             job = jobs.create_job(
                 project_name=request.project_name,
-                source_volume_id=request.source_volume_id,
-                dest_main_id=request.dest_main_id,
-                dest_backup_id=request.dest_backup_id,
+                source_path_ids=request.source_path_ids,
+                replica_path_ids=request.replica_path_ids,
                 operator_origin=request.operator_origin,
                 policy=request.policy,
             )

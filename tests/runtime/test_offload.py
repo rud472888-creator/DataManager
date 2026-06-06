@@ -3,7 +3,7 @@ from pathlib import Path
 from app.persistence.db import Database
 from app.persistence.migrations import apply_migrations
 from app.persistence.repositories import JobFileRepository, JobRepository
-from app.runtime.offload import DestinationPlan, OffloadService
+from app.runtime.offload import DestinationPlan, OffloadService, ReplicaPath, SourcePath
 from app.runtime.scan import scan_source
 from app.runtime.state_machine import JobState
 
@@ -31,6 +31,49 @@ def _write_source(root: Path) -> None:
     (root / "._A001_C003.braw").write_bytes(b"ignored")
 
 
+def test_offload_replicates_n_sources_to_n_equal_replica_paths(tmp_path) -> None:
+    database = Database(tmp_path / "fdm.sqlite3")
+    job_id = _make_job(database)
+    source_a = tmp_path / "card-a"
+    source_b = tmp_path / "card-b"
+    (source_a / "A001").mkdir(parents=True)
+    (source_a / "A001" / "A001_C001.braw").write_bytes(b"clip-a")
+    (source_b / "B001").mkdir(parents=True)
+    (source_b / "B001" / "B001_C001.braw").write_bytes(b"clip-b")
+
+    result = OffloadService(database).execute(
+        job_id=job_id,
+        source_paths=(
+            SourcePath(path_id="path1", root=source_a),
+            SourcePath(path_id="path2", root=source_b),
+        ),
+        plan=DestinationPlan(
+            project_name="Project",
+            replica_paths=(
+                ReplicaPath(path_id="path1", root=tmp_path / "replica-1"),
+                ReplicaPath(path_id="path2", root=tmp_path / "replica-2"),
+                ReplicaPath(path_id="path3", root=tmp_path / "replica-3"),
+            ),
+        ),
+    )
+
+    assert result.state is JobState.COMPLETED
+    for replica in ("replica-1", "replica-2", "replica-3"):
+        assert (tmp_path / replica / "Project/01_Footage/R#1/path1/A001/A001_C001.braw").exists()
+        assert (tmp_path / replica / "Project/01_Footage/R#1/path2/B001/B001_C001.braw").exists()
+
+    with database.session() as connection:
+        files = JobFileRepository(connection).list_for_job(job_id)
+
+    assert len(files) == 2
+    assert {file.source_path_id for file in files} == {"path1", "path2"}
+    assert all(len(file.replica_results) == 3 for file in files)
+    assert all(
+        {replica.path_id for replica in file.replica_results} == {"path1", "path2", "path3"}
+        for file in files
+    )
+
+
 def test_scan_source_filters_supported_files(tmp_path) -> None:
     source = tmp_path / "source"
     _write_source(source)
@@ -48,7 +91,7 @@ def test_scan_source_filters_supported_files(tmp_path) -> None:
     ]
 
 
-def test_offload_success_copies_main_backup_and_persists_results(tmp_path) -> None:
+def test_offload_success_copies_to_equal_replica_paths_and_persists_results(tmp_path) -> None:
     database = Database(tmp_path / "fdm.sqlite3")
     job_id = _make_job(database)
     source = tmp_path / "source"
@@ -56,29 +99,31 @@ def test_offload_success_copies_main_backup_and_persists_results(tmp_path) -> No
 
     result = OffloadService(database).execute(
         job_id=job_id,
-        source_root=source,
+        source_paths=(SourcePath(path_id="path1", root=source),),
         plan=DestinationPlan(
             project_name="Project",
-            main_root=tmp_path / "main",
-            backup_root=tmp_path / "backup",
+            replica_paths=(
+                ReplicaPath(path_id="path1", root=tmp_path / "path1"),
+                ReplicaPath(path_id="path2", root=tmp_path / "path2"),
+            ),
         ),
     )
 
     assert result.state is JobState.COMPLETED
-    assert (tmp_path / "main/Project/01_Footage/R#1/A001/A001_C001.braw").exists()
-    assert (tmp_path / "main/Project/01_Footage/R#1/R001/R001_C001.r3d").exists()
-    assert (tmp_path / "main/Project/01_Footage/R#1/ARRI/ALEXA_C001.ari").exists()
-    assert (tmp_path / "main/Project/01_Footage/R#1/ARRI/ALEXA_C002.mxf").exists()
-    assert (tmp_path / "main/Project/01_Footage/R#1/Video/B001_C001.mov").exists()
-    assert (tmp_path / "main/Project/01_Footage/R#1/Video/B001_C002.mp4").exists()
-    assert (tmp_path / "backup/Project/01_Footage/R#1/A001/A001_C002.braw").exists()
-    assert (tmp_path / "main/Project/00_Master/reports").is_dir()
-    assert (tmp_path / "main/Project/02_Comp").is_dir()
-    assert (tmp_path / "main/Project/03_2D_Design").is_dir()
-    assert (tmp_path / "main/Project/04_Color").is_dir()
-    assert (tmp_path / "main/Project/05_Sound").is_dir()
-    assert (tmp_path / "main/Project/06_FIN").is_dir()
-    assert (tmp_path / "main/Project/07_ETC_DATA").is_dir()
+    assert (tmp_path / "path1/Project/01_Footage/R#1/path1/A001/A001_C001.braw").exists()
+    assert (tmp_path / "path1/Project/01_Footage/R#1/path1/R001/R001_C001.r3d").exists()
+    assert (tmp_path / "path1/Project/01_Footage/R#1/path1/ARRI/ALEXA_C001.ari").exists()
+    assert (tmp_path / "path1/Project/01_Footage/R#1/path1/ARRI/ALEXA_C002.mxf").exists()
+    assert (tmp_path / "path1/Project/01_Footage/R#1/path1/Video/B001_C001.mov").exists()
+    assert (tmp_path / "path1/Project/01_Footage/R#1/path1/Video/B001_C002.mp4").exists()
+    assert (tmp_path / "path2/Project/01_Footage/R#1/path1/A001/A001_C002.braw").exists()
+    assert (tmp_path / "path1/Project/00_Master/reports").is_dir()
+    assert (tmp_path / "path1/Project/02_Comp").is_dir()
+    assert (tmp_path / "path1/Project/03_2D_Design").is_dir()
+    assert (tmp_path / "path1/Project/04_Color").is_dir()
+    assert (tmp_path / "path1/Project/05_Sound").is_dir()
+    assert (tmp_path / "path1/Project/06_FIN").is_dir()
+    assert (tmp_path / "path1/Project/07_ETC_DATA").is_dir()
 
     with database.session() as connection:
         job = JobRepository(connection).get(job_id)
@@ -88,7 +133,43 @@ def test_offload_success_copies_main_backup_and_persists_results(tmp_path) -> No
     assert job.state == "COMPLETED"
     assert len(files) == 7
     assert {file.status for file in files} == {"verified"}
-    assert all(file.checksum_source == file.checksum_main == file.checksum_backup for file in files)
+    assert all(
+        file.checksum_source == replica.checksum
+        for file in files
+        for replica in file.replica_results
+    )
+
+
+def test_metadata_copy_permission_error_does_not_fail_verified_content(
+    tmp_path, monkeypatch
+) -> None:
+    database = Database(tmp_path / "fdm.sqlite3")
+    job_id = _make_job(database)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "A001_C001.braw").write_bytes(b"clip")
+
+    from app.runtime import offload
+
+    def denied_metadata_copy(source_path: Path, target: Path) -> None:
+        raise PermissionError(f"metadata denied: {target}")
+
+    monkeypatch.setattr(offload.shutil, "copystat", denied_metadata_copy)
+
+    result = OffloadService(database).execute(
+        job_id=job_id,
+        source_paths=(SourcePath(path_id="path1", root=source),),
+        plan=DestinationPlan(
+            project_name="Project",
+            replica_paths=(ReplicaPath(path_id="path1", root=tmp_path / "path1"),),
+        ),
+    )
+
+    replica = tmp_path / "path1/Project/01_Footage/R#1/path1/A001_C001.braw"
+    assert result.state is JobState.COMPLETED
+    assert replica.read_bytes() == b"clip"
+    assert result.files[0].status == "verified"
+    assert result.files[0].checksum_source == result.files[0].replica_results[0].checksum
 
 
 def test_collision_blocks_blind_overwrite(tmp_path) -> None:
@@ -96,17 +177,19 @@ def test_collision_blocks_blind_overwrite(tmp_path) -> None:
     job_id = _make_job(database)
     source = tmp_path / "source"
     _write_source(source)
-    collision = tmp_path / "main/Project/01_Footage/R#1/A001/A001_C001.braw"
+    collision = tmp_path / "path1/Project/01_Footage/R#1/path1/A001/A001_C001.braw"
     collision.parent.mkdir(parents=True)
     collision.write_bytes(b"existing")
 
     result = OffloadService(database).execute(
         job_id=job_id,
-        source_root=source,
+        source_paths=(SourcePath(path_id="path1", root=source),),
         plan=DestinationPlan(
             project_name="Project",
-            main_root=tmp_path / "main",
-            backup_root=tmp_path / "backup",
+            replica_paths=(
+                ReplicaPath(path_id="path1", root=tmp_path / "path1"),
+                ReplicaPath(path_id="path2", root=tmp_path / "path2"),
+            ),
             footage_run_name="R#1",
         ),
     )
@@ -116,30 +199,57 @@ def test_collision_blocks_blind_overwrite(tmp_path) -> None:
     assert collision.read_bytes() == b"existing"
 
 
-def test_existing_run_folder_advances_next_backup_round(tmp_path) -> None:
+def test_existing_verified_target_is_reused_for_retry(tmp_path) -> None:
     database = Database(tmp_path / "fdm.sqlite3")
     job_id = _make_job(database)
     source = tmp_path / "source"
-    _write_source(source)
-    (tmp_path / "main/Project/01_Footage/R#1").mkdir(parents=True)
-    (tmp_path / "backup/Project/01_Footage/R#2").mkdir(parents=True)
+    source.mkdir()
+    (source / "A001_C001.braw").write_bytes(b"clip")
+    existing = tmp_path / "path1/Project/01_Footage/R#1/path1/A001_C001.braw"
+    existing.parent.mkdir(parents=True)
+    existing.write_bytes(b"clip")
 
     result = OffloadService(database).execute(
         job_id=job_id,
-        source_root=source,
+        source_paths=(SourcePath(path_id="path1", root=source),),
         plan=DestinationPlan(
             project_name="Project",
-            main_root=tmp_path / "main",
-            backup_root=tmp_path / "backup",
+            replica_paths=(ReplicaPath(path_id="path1", root=tmp_path / "path1"),),
+            footage_run_name="R#1",
         ),
     )
 
     assert result.state is JobState.COMPLETED
-    assert (tmp_path / "main/Project/01_Footage/R#3/A001/A001_C001.braw").exists()
-    assert (tmp_path / "backup/Project/01_Footage/R#3/A001/A001_C001.braw").exists()
+    assert result.files[0].status == "verified"
+    assert existing.read_bytes() == b"clip"
 
 
-def test_backup_failure_yields_warn_after_main_success(tmp_path, monkeypatch) -> None:
+def test_existing_run_folder_advances_next_replica_round(tmp_path) -> None:
+    database = Database(tmp_path / "fdm.sqlite3")
+    job_id = _make_job(database)
+    source = tmp_path / "source"
+    _write_source(source)
+    (tmp_path / "path1/Project/01_Footage/R#1").mkdir(parents=True)
+    (tmp_path / "path2/Project/01_Footage/R#2").mkdir(parents=True)
+
+    result = OffloadService(database).execute(
+        job_id=job_id,
+        source_paths=(SourcePath(path_id="path1", root=source),),
+        plan=DestinationPlan(
+            project_name="Project",
+            replica_paths=(
+                ReplicaPath(path_id="path1", root=tmp_path / "path1"),
+                ReplicaPath(path_id="path2", root=tmp_path / "path2"),
+            ),
+        ),
+    )
+
+    assert result.state is JobState.COMPLETED
+    assert (tmp_path / "path1/Project/01_Footage/R#3/path1/A001/A001_C001.braw").exists()
+    assert (tmp_path / "path2/Project/01_Footage/R#3/path1/A001/A001_C001.braw").exists()
+
+
+def test_replica_failure_yields_warn_after_other_replica_success(tmp_path, monkeypatch) -> None:
     database = Database(tmp_path / "fdm.sqlite3")
     job_id = _make_job(database)
     source = tmp_path / "source"
@@ -149,26 +259,28 @@ def test_backup_failure_yields_warn_after_main_success(tmp_path, monkeypatch) ->
 
     original = offload._copy_and_hash
 
-    def flaky_backup(source_path: Path, target: Path) -> str:
-        if "backup" in target.parts:
-            raise OSError("backup device unavailable")
+    def flaky_replica(source_path: Path, target: Path) -> str:
+        if "path2" in target.parts:
+            raise OSError("replica device unavailable")
         return original(source_path, target)
 
-    monkeypatch.setattr(offload, "_copy_and_hash", flaky_backup)
+    monkeypatch.setattr(offload, "_copy_and_hash", flaky_replica)
 
     result = OffloadService(database).execute(
         job_id=job_id,
-        source_root=source,
+        source_paths=(SourcePath(path_id="path1", root=source),),
         plan=DestinationPlan(
             project_name="Project",
-            main_root=tmp_path / "main",
-            backup_root=tmp_path / "backup",
+            replica_paths=(
+                ReplicaPath(path_id="path1", root=tmp_path / "path1"),
+                ReplicaPath(path_id="path2", root=tmp_path / "path2"),
+            ),
         ),
     )
 
     assert result.state is JobState.WARN
     assert {file.status for file in result.files} == {"warn"}
-    assert {file.error_code for file in result.files} == {"backup_copy_failed"}
+    assert {file.error_code for file in result.files} == {"replica_incomplete"}
 
 
 def test_source_disappearance_yields_failed(tmp_path, monkeypatch) -> None:
@@ -186,13 +298,15 @@ def test_source_disappearance_yields_failed(tmp_path, monkeypatch) -> None:
 
     result = OffloadService(database).execute(
         job_id=job_id,
-        source_root=source,
+        source_paths=(SourcePath(path_id="path1", root=source),),
         plan=DestinationPlan(
             project_name="Project",
-            main_root=tmp_path / "main",
-            backup_root=tmp_path / "backup",
+            replica_paths=(
+                ReplicaPath(path_id="path1", root=tmp_path / "path1"),
+                ReplicaPath(path_id="path2", root=tmp_path / "path2"),
+            ),
         ),
     )
 
     assert result.state is JobState.FAILED
-    assert result.files[0].error_code == "main_copy_failed"
+    assert result.files[0].error_code == "replica_copy_failed"

@@ -5,7 +5,7 @@ from app.parsers.standard_video_parser import StandardVideoParser
 from app.persistence.db import Database
 from app.persistence.migrations import apply_migrations
 from app.persistence.repositories import ClipRepository, JobRepository, ReportRepository
-from app.runtime.offload import DestinationPlan, OffloadService
+from app.runtime.offload import DestinationPlan, OffloadService, ReplicaPath, SourcePath
 from app.runtime.parse import ParseService
 from app.runtime.reports import ReportService
 
@@ -23,9 +23,19 @@ def _offloaded_job(tmp_path):
         apply_migrations(connection)
         job = JobRepository(connection).create_stub_job("Reports")
     source = _source_tree(tmp_path)
-    plan = DestinationPlan("Reports", tmp_path / "main", tmp_path / "backup")
-    OffloadService(database).execute(job_id=job.job_id, source_root=source, plan=plan)
-    return database, job.job_id, plan.main_project_root
+    plan = DestinationPlan(
+        "Reports",
+        (
+            ReplicaPath("path1", tmp_path / "path1"),
+            ReplicaPath("path2", tmp_path / "path2"),
+        ),
+    )
+    OffloadService(database).execute(
+        job_id=job.job_id,
+        source_paths=(SourcePath("path1", source),),
+        plan=plan,
+    )
+    return database, job.job_id, plan.report_project_root
 
 
 def _offloaded_video_job(tmp_path):
@@ -36,9 +46,19 @@ def _offloaded_video_job(tmp_path):
     source = tmp_path / "source"
     (source / "Video").mkdir(parents=True)
     (source / "Video" / "B001_C001.mov").write_bytes(b"quicktime")
-    plan = DestinationPlan("Video Reports", tmp_path / "main", tmp_path / "backup")
-    OffloadService(database).execute(job_id=job.job_id, source_root=source, plan=plan)
-    return database, job.job_id, plan.main_project_root
+    plan = DestinationPlan(
+        "Video Reports",
+        (
+            ReplicaPath("path1", tmp_path / "path1"),
+            ReplicaPath("path2", tmp_path / "path2"),
+        ),
+    )
+    OffloadService(database).execute(
+        job_id=job.job_id,
+        source_paths=(SourcePath("path1", source),),
+        plan=plan,
+    )
+    return database, job.job_id, plan.report_project_root
 
 
 def test_mock_parse_persists_clip_metadata(tmp_path) -> None:
@@ -151,9 +171,7 @@ def _assert_pdf_startxref_points_to_xref(pdf_bytes: bytes) -> None:
 def _write_ffprobe_command(tmp_path, payload: dict[str, object]):
     command = tmp_path / "ffprobe.py"
     command.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json\n"
-        f"print(json.dumps({json.dumps(payload)}))\n"
+        f"#!/usr/bin/env python3\nimport json\nprint(json.dumps({json.dumps(payload)}))\n"
     )
     command.chmod(0o755)
     return command

@@ -21,13 +21,13 @@ def client(monkeypatch, tmp_path) -> TestClient:
     (source / "ALEXA_C002.mxf").write_bytes(b"arri-mxf")
     (source / "B001_C001.mov").write_bytes(b"quicktime")
     (source / "B001_C002.mp4").write_bytes(b"mpeg-4")
-    (scan_root / "MainRAID").mkdir()
+    (scan_root / "ReplicaRAID").mkdir()
     (scan_root / ".timemachine").mkdir()
     (scan_root / "Macintosh HD").mkdir()
     monkeypatch.setenv("FDM_DATABASE_PATH", str(tmp_path / "fdm.sqlite3"))
     monkeypatch.setenv("FDM_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("FDM_VOLUME_SCAN_ROOT", str(scan_root))
-    monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", str(tmp_path / "main"))
+    monkeypatch.setenv("FDM_ALLOWED_DEST_ROOTS", str(tmp_path / "replica"))
     return TestClient(create_app())
 
 
@@ -65,13 +65,12 @@ def test_runtime_status_payload(client: TestClient) -> None:
 
 
 def test_runtime_status_reports_persisted_active_job(client: TestClient) -> None:
-    source_id, dest_id = _volume_ids(client)
+    source_id, replica_id = _volume_ids(client)
     job = client.app.state.agent.lifecycle.create_job(
         JobCreateRequest(
             project_name="Status",
-            source_volume_id=source_id,
-            dest_main_id=dest_id,
-            dest_backup_id=None,
+            source_path_ids=(source_id,),
+            replica_path_ids=(replica_id,),
             operator_origin="test",
             policy={},
         )
@@ -89,12 +88,10 @@ def test_volumes_are_runtime_owned_candidates(client: TestClient) -> None:
     payload = response.json()
     source_ids = {volume["volume_id"] for volume in payload["sources"]}
     destination_ids = {volume["volume_id"] for volume in payload["destinations"]}
-    all_paths = {
-        volume["display_path"] for volume in payload["sources"] + payload["destinations"]
-    }
+    all_paths = {volume["display_path"] for volume in payload["sources"] + payload["destinations"]}
 
     assert "src-cameracard" in source_ids
-    assert "dest-mainraid" in destination_ids
+    assert "dest-replicaraid" in destination_ids
     assert not any(path.endswith(".timemachine") for path in all_paths)
     assert not any(path.endswith("Macintosh HD") for path in all_paths)
     assert all(
@@ -103,15 +100,10 @@ def test_volumes_are_runtime_owned_candidates(client: TestClient) -> None:
     )
 
 
-def test_console_home_shell_loads(client: TestClient) -> None:
+def test_console_home_shell_is_removed(client: TestClient) -> None:
     response = client.get("/")
 
-    assert response.status_code == 200
-    assert "Footage Data Manager" in response.text
-    assert "New offload job" in response.text
-    assert "local runtime" in response.text
-    assert "Loading runtime state" in response.text
-    assert "Token is stored only in this browser session" in response.text
+    assert response.status_code == 404
 
 
 def test_runtime_websocket_stub(client: TestClient) -> None:
@@ -133,13 +125,12 @@ def test_settings_requires_token(client: TestClient) -> None:
 
 
 def test_command_auth_and_decision(client: TestClient) -> None:
-    source_id, dest_id = _volume_ids(client)
+    source_id, replica_id = _volume_ids(client)
     job = client.app.state.agent.lifecycle.create_job(
         JobCreateRequest(
             project_name="API Test",
-            source_volume_id=source_id,
-            dest_main_id=dest_id,
-            dest_backup_id=None,
+            source_path_ids=(source_id,),
+            replica_path_ids=(replica_id,),
             operator_origin="remote_web",
             policy={},
         )

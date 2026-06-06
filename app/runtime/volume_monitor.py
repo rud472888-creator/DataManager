@@ -28,9 +28,14 @@ class VolumeProvider(Protocol):
 class MockVolumeProvider:
     """Safe mock provider for foundation tests and shell UI."""
 
-    def __init__(self, allowed_dest_roots: tuple[Path, ...], source_root: Path) -> None:
+    def __init__(
+        self,
+        allowed_dest_roots: tuple[Path, ...],
+        source_root: Path | None = None,
+        source_roots: tuple[Path, ...] = (),
+    ) -> None:
         self.allowed_dest_roots = allowed_dest_roots
-        self.source_root = source_root
+        self.source_roots = source_roots or ((source_root,) if source_root is not None else ())
 
     def scan(self) -> VolumeSnapshot:
         destinations = [
@@ -47,15 +52,45 @@ class MockVolumeProvider:
         return VolumeSnapshot(
             sources=[
                 SystemVolume(
-                    volume_id="mock-source",
-                    label="Mock Source",
+                    volume_id=_mock_source_id(index),
+                    label=f"Mock Source {index + 1}",
                     kind="source",
-                    display_path=str(self.source_root),
+                    display_path=str(path),
                     status="available",
                     bytes_available=1024 * 1024,
                 )
+                for index, path in enumerate(self.source_roots)
             ],
             destinations=destinations,
+        )
+
+
+class ConfiguredPathVolumeProvider:
+    """Expose operator-approved source and destination paths as runtime volumes."""
+
+    def __init__(
+        self,
+        source_roots: tuple[Path, ...],
+        destination_roots: tuple[Path, ...],
+    ) -> None:
+        self.source_roots = source_roots
+        self.destination_roots = destination_roots
+
+    def scan(self) -> VolumeSnapshot:
+        return VolumeSnapshot(
+            sources=[
+                _volume(path, "source", f"source-path-{index + 1}", label=f"Source Path {index + 1}")
+                for index, path in enumerate(self.source_roots)
+            ],
+            destinations=[
+                _volume(
+                    path,
+                    "destination",
+                    f"destination-path-{index + 1}",
+                    label=f"Destination Path {index + 1}",
+                )
+                for index, path in enumerate(self.destination_roots)
+            ],
         )
 
 
@@ -109,15 +144,19 @@ class MacOSVolumeProvider:
         return paths
 
 
-def _volume(path: Path, kind: str, volume_id: str) -> SystemVolume:
+def _volume(path: Path, kind: str, volume_id: str, *, label: str | None = None) -> SystemVolume:
     return SystemVolume(
         volume_id=volume_id,
-        label=path.name,
+        label=label or path.name,
         kind=kind,
         display_path=str(path),
         status=_status(path),
         bytes_available=_bytes_available(path),
     )
+
+
+def _mock_source_id(index: int) -> str:
+    return "mock-source" if index == 0 else f"source-{index + 1}"
 
 
 def _status(path: Path) -> str:

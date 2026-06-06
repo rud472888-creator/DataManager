@@ -1,15 +1,16 @@
-"""Runtime-only offload and checksum pipeline."""
+"""Runtime-only n:n replication and checksum pipeline."""
 
 from __future__ import annotations
 
 import re
 import shutil
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from app.persistence.db import Database
-from app.persistence.models import JobFile
+from app.persistence.models import JobFile, JobFileReplica
 from app.persistence.repositories import EventRepository, JobFileRepository, JobRepository
 from app.runtime.checksum import sha256_file
 from app.runtime.scan import ScannedFile, scan_source
@@ -17,23 +18,36 @@ from app.runtime.state_machine import JobState
 
 
 class OffloadError(RuntimeError):
-    """Raised for unrecoverable offload failures."""
+    """Raised for unrecoverable replication failures."""
+
+
+@dataclass(frozen=True)
+class SourcePath:
+    path_id: str
+    root: Path
+
+
+@dataclass(frozen=True)
+class ReplicaPath:
+    path_id: str
+    root: Path
 
 
 @dataclass(frozen=True)
 class DestinationPlan:
     project_name: str
-    main_root: Path
-    backup_root: Path | None
+    replica_paths: tuple[ReplicaPath, ...]
     footage_run_name: str | None = None
 
     @property
-    def main_project_root(self) -> Path:
-        return self.main_root / self.project_name
+    def project_roots(self) -> tuple[Path, ...]:
+        return tuple(replica.root / self.project_name for replica in self.replica_paths)
 
     @property
-    def backup_project_root(self) -> Path | None:
-        return self.backup_root / self.project_name if self.backup_root else None
+    def report_project_root(self) -> Path:
+        if not self.project_roots:
+            raise OffloadError("at least one replica path is required")
+        return self.project_roots[0]
 
 
 PROJECT_FOLDERS = (
@@ -68,16 +82,18 @@ def create_destination_scaffold(project_root: Path) -> None:
         (project_root / relpath).mkdir(parents=True, exist_ok=True)
 
 
-def target_for(project_root: Path, run_name: str, scanned_file: ScannedFile) -> Path:
-    return project_root / FOOTAGE_FOLDER / run_name / scanned_file.relpath
+def target_for(
+    project_root: Path,
+    run_name: str,
+    source_path_id: str,
+    scanned_file: ScannedFile,
+) -> Path:
+    return project_root / _output_relpath(source_path_id, scanned_file, run_name)
 
 
 def next_footage_run_name(plan: DestinationPlan) -> str:
     highest = 0
-    project_roots = [plan.main_project_root]
-    if plan.backup_project_root is not None:
-        project_roots.append(plan.backup_project_root)
-    for project_root in project_roots:
+    for project_root in plan.project_roots:
         footage_root = project_root / FOOTAGE_FOLDER
         if not footage_root.exists():
             continue
@@ -91,7 +107,7 @@ def next_footage_run_name(plan: DestinationPlan) -> str:
 
 
 class OffloadService:
-    """Copy and verify files from source to main/backup destinations."""
+    """Copy and verify every source path into every equal replica path."""
 
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -100,15 +116,29 @@ class OffloadService:
         self,
         *,
         job_id: str,
-        source_root: Path,
+        source_paths: tuple[SourcePath, ...],
         plan: DestinationPlan,
         finalize_state: bool = True,
     ) -> OffloadResult:
+        if not source_paths:
+            return self._fail_job(
+                job_id,
+                "no_source_paths",
+                "at least one source path is required",
+                finalize_state,
+            )
+        if not plan.replica_paths:
+            return self._fail_job(
+                job_id,
+                "no_replica_paths",
+                "at least one replica path is required",
+                finalize_state,
+            )
         try:
-            scanned_files = scan_source(source_root)
+            scanned_by_source = [(source, scan_source(source.root)) for source in source_paths]
         except OSError as exc:
             return self._fail_job(job_id, "source_unavailable", str(exc), finalize_state)
-        if not scanned_files:
+        if not any(scanned_files for _, scanned_files in scanned_by_source):
             return self._fail_job(
                 job_id,
                 "no_supported_files",
@@ -120,111 +150,174 @@ class OffloadService:
             footage_run_name=plan.footage_run_name or next_footage_run_name(plan),
         )
         try:
-            self._prepare_destinations(active_plan, scanned_files)
+            self._prepare_destinations(active_plan, scanned_by_source)
         except OffloadError as exc:
             return self._fail_job(job_id, "destination_error", str(exc), finalize_state)
 
         results: list[JobFile] = []
-        saw_backup_failure = False
-        for scanned_file in scanned_files:
-            result = self._copy_one(job_id, scanned_file, active_plan)
-            results.append(result)
-            if result.status == "failed":
-                return self._finish_job(
-                    job_id,
-                    JobState.FAILED,
-                    results,
-                    result.error_code or "failed",
-                    finalize_state,
-                )
-            if result.status == "warn":
-                saw_backup_failure = True
-        state = JobState.WARN if saw_backup_failure else JobState.COMPLETED
-        reason = "backup failure" if saw_backup_failure else "offload verified"
+        saw_warn = False
+        for source, scanned_files in scanned_by_source:
+            for scanned_file in scanned_files:
+                result = self._copy_one(job_id, source, scanned_file, active_plan)
+                results.append(result)
+                if result.status == "failed":
+                    return self._finish_job(
+                        job_id,
+                        JobState.FAILED,
+                        results,
+                        result.error_code or "failed",
+                        finalize_state,
+                    )
+                if result.status == "warn":
+                    saw_warn = True
+        state = JobState.WARN if saw_warn else JobState.COMPLETED
+        reason = "replica failure" if saw_warn else "replication verified"
         return self._finish_job(job_id, state, results, reason, finalize_state)
 
     def _prepare_destinations(
         self,
         plan: DestinationPlan,
-        scanned_files: list[ScannedFile],
+        scanned_by_source: list[tuple[SourcePath, list[ScannedFile]]],
     ) -> None:
         if plan.footage_run_name is None:
             raise OffloadError("footage run name was not resolved")
-        create_destination_scaffold(plan.main_project_root)
-        if plan.backup_project_root is not None:
-            create_destination_scaffold(plan.backup_project_root)
-        for scanned_file in scanned_files:
-            targets = [target_for(plan.main_project_root, plan.footage_run_name, scanned_file)]
-            if plan.backup_project_root is not None:
-                targets.append(
-                    target_for(plan.backup_project_root, plan.footage_run_name, scanned_file)
-                )
-            for target in targets:
-                if target.exists():
-                    raise OffloadError(f"target collision blocks overwrite: {target}")
+        for project_root in plan.project_roots:
+            create_destination_scaffold(project_root)
+        for source, scanned_files in scanned_by_source:
+            for scanned_file in scanned_files:
+                for replica in plan.replica_paths:
+                    target = target_for(
+                        replica.root / plan.project_name,
+                        plan.footage_run_name,
+                        source.path_id,
+                        scanned_file,
+                    )
+                    if target.exists() and target.stat().st_size != scanned_file.size_bytes:
+                        raise OffloadError(f"target collision blocks overwrite: {target}")
 
-    def _copy_one(self, job_id: str, scanned_file: ScannedFile, plan: DestinationPlan) -> JobFile:
+    def _copy_one(
+        self,
+        job_id: str,
+        source: SourcePath,
+        scanned_file: ScannedFile,
+        plan: DestinationPlan,
+    ) -> JobFile:
         if plan.footage_run_name is None:
             raise OffloadError("footage run name was not resolved")
         source_checksum = sha256_file(scanned_file.path)
-        main_target = target_for(plan.main_project_root, plan.footage_run_name, scanned_file)
-        backup_target = (
-            target_for(plan.backup_project_root, plan.footage_run_name, scanned_file)
-            if plan.backup_project_root
-            else None
-        )
-        try:
-            main_checksum = _copy_and_hash(scanned_file.path, main_target)
-        except OSError as exc:
-            return _job_file(
-                job_id,
-                scanned_file,
-                status="failed",
-                checksum_source=source_checksum,
-                error_code="main_copy_failed",
-                error_message=str(exc),
+        replica_results: list[JobFileReplica] = []
+        for replica in plan.replica_paths:
+            project_root = replica.root / plan.project_name
+            target = target_for(project_root, plan.footage_run_name, source.path_id, scanned_file)
+            replica_results.append(
+                self._copy_to_replica(
+                    source,
+                    replica,
+                    scanned_file,
+                    target,
+                    plan.footage_run_name,
+                    source_checksum,
+                    job_id,
+                )
             )
-        if main_checksum != source_checksum:
-            return _job_file(
-                job_id,
-                scanned_file,
-                status="failed",
-                dest_main_relpath=_output_relpath(scanned_file, plan.footage_run_name),
-                checksum_source=source_checksum,
-                checksum_main=main_checksum,
-                error_code="main_checksum_mismatch",
-                error_message="main destination checksum mismatch",
-            )
-
-        backup_checksum: str | None = None
-        backup_status = "verified"
-        error_code: str | None = None
-        error_message: str | None = None
-        if backup_target is not None:
-            try:
-                backup_checksum = _copy_and_hash(scanned_file.path, backup_target)
-                if backup_checksum != source_checksum:
-                    backup_status = "warn"
-                    error_code = "backup_checksum_mismatch"
-                    error_message = "backup destination checksum mismatch"
-            except OSError as exc:
-                backup_status = "warn"
-                error_code = "backup_copy_failed"
-                error_message = str(exc)
-
+        failed = [result for result in replica_results if result.status != "verified"]
+        if any(result.error_code == "target_collision" for result in failed):
+            status = "failed"
+            error_code = "target_collision"
+            error_message = "target collision blocks overwrite"
+        elif len(failed) == len(replica_results):
+            status = "failed"
+            error_code = failed[0].error_code
+            error_message = failed[0].error_message
+        elif failed:
+            status = "warn"
+            error_code = "replica_incomplete"
+            error_message = "one or more replica paths failed verification"
+        else:
+            status = "verified"
+            error_code = None
+            error_message = None
         return _job_file(
             job_id,
+            source,
             scanned_file,
-            status=backup_status,
-            dest_main_relpath=_output_relpath(scanned_file, plan.footage_run_name),
-            dest_backup_relpath=_output_relpath(scanned_file, plan.footage_run_name)
-            if backup_target
-            else None,
+            status=status,
             checksum_source=source_checksum,
-            checksum_main=main_checksum,
-            checksum_backup=backup_checksum,
+            replica_results=tuple(replica_results),
             error_code=error_code,
             error_message=error_message,
+        )
+
+    def _copy_to_replica(
+        self,
+        source: SourcePath,
+        replica: ReplicaPath,
+        scanned_file: ScannedFile,
+        target: Path,
+        run_name: str,
+        source_checksum: str,
+        job_id: str,
+    ) -> JobFileReplica:
+        file_id = _file_id(job_id, source, scanned_file)
+        dest_relpath = _output_relpath(source.path_id, scanned_file, run_name)
+        if target.exists():
+            try:
+                checksum = sha256_file(target)
+            except OSError as exc:
+                return JobFileReplica(
+                    file_id=file_id,
+                    path_id=replica.path_id,
+                    dest_relpath=dest_relpath,
+                    checksum=None,
+                    status="failed",
+                    error_code="target_collision",
+                    error_message=f"target collision blocks overwrite: {target}: {exc}",
+                )
+            if checksum == source_checksum:
+                return JobFileReplica(
+                    file_id=file_id,
+                    path_id=replica.path_id,
+                    dest_relpath=dest_relpath,
+                    checksum=checksum,
+                    status="verified",
+                )
+            return JobFileReplica(
+                file_id=file_id,
+                path_id=replica.path_id,
+                dest_relpath=dest_relpath,
+                checksum=checksum,
+                status="failed",
+                error_code="target_collision",
+                error_message=f"target collision blocks overwrite: {target}",
+            )
+        try:
+            checksum = _copy_and_hash(scanned_file.path, target)
+        except OSError as exc:
+            return JobFileReplica(
+                file_id=file_id,
+                path_id=replica.path_id,
+                dest_relpath=dest_relpath,
+                checksum=None,
+                status="failed",
+                error_code="replica_copy_failed",
+                error_message=str(exc),
+            )
+        if checksum != source_checksum:
+            return JobFileReplica(
+                file_id=file_id,
+                path_id=replica.path_id,
+                dest_relpath=dest_relpath,
+                checksum=checksum,
+                status="failed",
+                error_code="replica_checksum_mismatch",
+                error_message="replica checksum mismatch",
+            )
+        return JobFileReplica(
+            file_id=file_id,
+            path_id=replica.path_id,
+            dest_relpath=dest_relpath,
+            checksum=checksum,
+            status="verified",
         )
 
     def _fail_job(
@@ -268,38 +361,54 @@ class OffloadService:
 
 def _copy_and_hash(source: Path, target: Path) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-    return sha256_file(target)
+    partial = target.with_name(f".{target.name}.partial-{uuid4().hex}")
+    try:
+        shutil.copyfile(source, partial)
+        checksum = sha256_file(partial)
+        _copy_metadata_best_effort(source, partial)
+        partial.replace(target)
+        return checksum
+    except OSError:
+        with suppress(OSError):
+            partial.unlink()
+        raise
+
+
+def _copy_metadata_best_effort(source: Path, target: Path) -> None:
+    try:
+        shutil.copystat(source, target)
+    except OSError:
+        pass
 
 
 def _job_file(
     job_id: str,
+    source: SourcePath,
     scanned_file: ScannedFile,
     *,
     status: str,
-    dest_main_relpath: str | None = None,
-    dest_backup_relpath: str | None = None,
     checksum_source: str | None = None,
-    checksum_main: str | None = None,
-    checksum_backup: str | None = None,
+    replica_results: tuple[JobFileReplica, ...] = (),
     error_code: str | None = None,
     error_message: str | None = None,
 ) -> JobFile:
     return JobFile(
-        file_id=str(uuid5(NAMESPACE_URL, f"{job_id}:{scanned_file.relpath.as_posix()}")),
+        file_id=_file_id(job_id, source, scanned_file),
         job_id=job_id,
+        source_path_id=source.path_id,
         source_relpath=scanned_file.relpath.as_posix(),
-        dest_main_relpath=dest_main_relpath,
-        dest_backup_relpath=dest_backup_relpath,
         size_bytes=scanned_file.size_bytes,
         checksum_source=checksum_source,
-        checksum_main=checksum_main,
-        checksum_backup=checksum_backup,
+        replica_results=replica_results,
         status=status,
         error_code=error_code,
         error_message=error_message,
     )
 
 
-def _output_relpath(scanned_file: ScannedFile, run_name: str) -> str:
-    return (FOOTAGE_FOLDER / run_name / scanned_file.relpath).as_posix()
+def _file_id(job_id: str, source: SourcePath, scanned_file: ScannedFile) -> str:
+    return str(uuid5(NAMESPACE_URL, f"{job_id}:{source.path_id}:{scanned_file.relpath.as_posix()}"))
+
+
+def _output_relpath(source_path_id: str, scanned_file: ScannedFile, run_name: str) -> str:
+    return (FOOTAGE_FOLDER / run_name / source_path_id / scanned_file.relpath).as_posix()
