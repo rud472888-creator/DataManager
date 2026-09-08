@@ -38,6 +38,7 @@ class DestinationPlan:
     project_name: str
     replica_paths: tuple[ReplicaPath, ...]
     footage_run_name: str | None = None
+    flat_card_layout: bool = False
 
     @property
     def project_roots(self) -> tuple[Path, ...]:
@@ -77,8 +78,9 @@ class OffloadResult:
     reason: str = ""
 
 
-def create_destination_scaffold(project_root: Path) -> None:
-    for relpath in PROJECT_FOLDERS + MASTER_SUBFOLDERS:
+def create_destination_scaffold(project_root: Path, flat_card_layout: bool = False) -> None:
+    folders = tuple(Path("001_Footage") if flat_card_layout and p == FOOTAGE_FOLDER else p for p in PROJECT_FOLDERS)
+    for relpath in folders + MASTER_SUBFOLDERS:
         (project_root / relpath).mkdir(parents=True, exist_ok=True)
 
 
@@ -87,14 +89,17 @@ def target_for(
     run_name: str,
     source_path_id: str,
     scanned_file: ScannedFile,
+    flat_card_layout: bool = False,
 ) -> Path:
+    if flat_card_layout:
+        return project_root / "001_Footage" / run_name / scanned_file.relpath
     return project_root / _output_relpath(source_path_id, scanned_file, run_name)
 
 
 def next_footage_run_name(plan: DestinationPlan) -> str:
     highest = 0
     for project_root in plan.project_roots:
-        footage_root = project_root / FOOTAGE_FOLDER
+        footage_root = project_root / ("001_Footage" if plan.flat_card_layout else FOOTAGE_FOLDER)
         if not footage_root.exists():
             continue
         for child in footage_root.iterdir():
@@ -127,6 +132,8 @@ class OffloadService:
                 "at least one source path is required",
                 finalize_state,
             )
+        if plan.flat_card_layout and len(source_paths) != 1:
+            return self._fail_job(job_id, "multiple_sources", "flat card layout requires one source", finalize_state)
         if not plan.replica_paths:
             return self._fail_job(
                 job_id,
@@ -182,7 +189,7 @@ class OffloadService:
         if plan.footage_run_name is None:
             raise OffloadError("footage run name was not resolved")
         for project_root in plan.project_roots:
-            create_destination_scaffold(project_root)
+            create_destination_scaffold(project_root, plan.flat_card_layout)
         for source, scanned_files in scanned_by_source:
             for scanned_file in scanned_files:
                 for replica in plan.replica_paths:
@@ -191,6 +198,7 @@ class OffloadService:
                         plan.footage_run_name,
                         source.path_id,
                         scanned_file,
+                        plan.flat_card_layout,
                     )
                     if target.exists() and target.stat().st_size != scanned_file.size_bytes:
                         raise OffloadError(f"target collision blocks overwrite: {target}")
@@ -208,7 +216,7 @@ class OffloadService:
         replica_results: list[JobFileReplica] = []
         for replica in plan.replica_paths:
             project_root = replica.root / plan.project_name
-            target = target_for(project_root, plan.footage_run_name, source.path_id, scanned_file)
+            target = target_for(project_root, plan.footage_run_name, source.path_id, scanned_file, plan.flat_card_layout)
             replica_results.append(
                 self._copy_to_replica(
                     source,
@@ -259,7 +267,7 @@ class OffloadService:
         job_id: str,
     ) -> JobFileReplica:
         file_id = _file_id(job_id, source, scanned_file)
-        dest_relpath = _output_relpath(source.path_id, scanned_file, run_name)
+        dest_relpath = Path(*target.relative_to(replica.root).parts[1:]).as_posix()
         if target.exists():
             try:
                 checksum = sha256_file(target)

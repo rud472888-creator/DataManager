@@ -31,6 +31,33 @@ def _write_source(root: Path) -> None:
     (root / "._A001_C003.braw").write_bytes(b"ignored")
 
 
+def test_flat_card_layout_copies_contents_directly_and_preserves_source_subfolders(tmp_path):
+    database = Database(tmp_path / "flat.sqlite3")
+    job_id = _make_job(database)
+    source = tmp_path / "card"
+    (source / "CLIPS").mkdir(parents=True)
+    (source / "A001.mov").write_bytes(b"root clip")
+    (source / "CLIPS/A002.mov").write_bytes(b"nested clip")
+    destination = tmp_path / "backup"
+    result = OffloadService(database).execute(
+        job_id=job_id,
+        source_paths=(SourcePath(path_id="source-path-1", root=source),),
+        plan=DestinationPlan(
+            project_name="Film", replica_paths=(ReplicaPath(path_id="replica-1", root=destination),),
+            footage_run_name="R#3", flat_card_layout=True,
+        ),
+    )
+    assert result.state is JobState.COMPLETED
+    roll = destination / "Film/001_Footage/R#3"
+    assert (roll / "A001.mov").read_bytes() == b"root clip"
+    assert (roll / "CLIPS/A002.mov").read_bytes() == b"nested clip"
+    assert not (roll / "source-path-1").exists()
+    assert not (destination / "Film/01_Footage").exists()
+    assert {r.dest_relpath for f in result.files for r in f.replica_results} == {
+        "001_Footage/R#3/A001.mov", "001_Footage/R#3/CLIPS/A002.mov",
+    }
+
+
 def test_offload_replicates_n_sources_to_n_equal_replica_paths(tmp_path) -> None:
     database = Database(tmp_path / "fdm.sqlite3")
     job_id = _make_job(database)

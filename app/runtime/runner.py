@@ -92,6 +92,7 @@ class RuntimeJobRunner:
                 project_name=job.project_name,
                 replica_paths=replicas,
                 footage_run_name=_policy_footage_run_name(job.policy_json),
+                flat_card_layout=json.loads(job.policy_json).get("flat_card_layout") is True,
             ),
         )
 
