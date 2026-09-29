@@ -12,13 +12,21 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from app.persistence.db import Database
 from app.persistence.models import JobFile, JobFileReplica
 from app.persistence.repositories import EventRepository, JobFileRepository, JobRepository
-from app.runtime.checksum import sha256_file
+from app.runtime.checksum import fsync_directory, fsync_file, sha256_file
 from app.runtime.scan import ScannedFile, scan_source
 from app.runtime.state_machine import JobState
 
 
 class OffloadError(RuntimeError):
     """Raised for unrecoverable replication failures."""
+
+
+class ReplicaChecksumMismatch(OSError):
+    """Raised when a freshly written replica does not match the source checksum."""
+
+    def __init__(self, checksum: str) -> None:
+        super().__init__("replica checksum mismatch")
+        self.checksum = checksum
 
 
 @dataclass(frozen=True)
@@ -141,6 +149,9 @@ class OffloadService:
                 "at least one replica path is required",
                 finalize_state,
             )
+        overlap = _source_destination_overlap(source_paths, plan)
+        if overlap is not None:
+            return self._fail_job(job_id, "destination_overlaps_source", overlap, finalize_state)
         try:
             scanned_by_source = [(source, scan_source(source.root)) for source in source_paths]
         except OSError as exc:
@@ -212,7 +223,28 @@ class OffloadService:
     ) -> JobFile:
         if plan.footage_run_name is None:
             raise OffloadError("footage run name was not resolved")
-        source_checksum = sha256_file(scanned_file.path)
+        try:
+            before = _source_fingerprint(scanned_file.path)
+            source_checksum = sha256_file(scanned_file.path)
+        except OSError as exc:
+            return _job_file(
+                job_id,
+                source,
+                scanned_file,
+                status="failed",
+                error_code="source_read_failed",
+                error_message=str(exc),
+            )
+        if before[0] != scanned_file.size_bytes:
+            return _job_file(
+                job_id,
+                source,
+                scanned_file,
+                status="failed",
+                checksum_source=source_checksum,
+                error_code="source_changed",
+                error_message="source file size changed after scan",
+            )
         replica_results: list[JobFileReplica] = []
         for replica in plan.replica_paths:
             project_root = replica.root / plan.project_name
@@ -229,7 +261,15 @@ class OffloadService:
                 )
             )
         failed = [result for result in replica_results if result.status != "verified"]
-        if any(result.error_code == "target_collision" for result in failed):
+        try:
+            source_unchanged = _source_fingerprint(scanned_file.path) == before
+        except OSError:
+            source_unchanged = False
+        if not source_unchanged:
+            status = "failed"
+            error_code = "source_changed"
+            error_message = "source file changed or became unreadable during copy"
+        elif any(result.error_code == "target_collision" for result in failed):
             status = "failed"
             error_code = "target_collision"
             error_message = "target collision blocks overwrite"
@@ -299,7 +339,17 @@ class OffloadService:
                 error_message=f"target collision blocks overwrite: {target}",
             )
         try:
-            checksum = _copy_and_hash(scanned_file.path, target)
+            checksum = _copy_and_hash(scanned_file.path, target, source_checksum)
+        except ReplicaChecksumMismatch as exc:
+            return JobFileReplica(
+                file_id=file_id,
+                path_id=replica.path_id,
+                dest_relpath=dest_relpath,
+                checksum=exc.checksum,
+                status="failed",
+                error_code="replica_checksum_mismatch",
+                error_message="replica checksum mismatch",
+            )
         except OSError as exc:
             return JobFileReplica(
                 file_id=file_id,
@@ -367,14 +417,26 @@ class OffloadService:
         return OffloadResult(job_id=job_id, state=state, files=files, reason=reason)
 
 
-def _copy_and_hash(source: Path, target: Path) -> str:
+def _copy_and_hash(source: Path, target: Path, expected_checksum: str) -> str:
+    """Copy to a hidden partial file, verify it from disk, then publish it.
+
+    The final target name only ever holds a replica whose on-disk bytes matched
+    ``expected_checksum``; a mismatching or failed copy is removed.
+    """
+
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(f".{target.name}.partial-{uuid4().hex}")
     try:
         shutil.copyfile(source, partial)
-        checksum = sha256_file(partial)
+        fsync_file(partial)
+        checksum = sha256_file(partial, bypass_cache=True)
+        if checksum != expected_checksum:
+            raise ReplicaChecksumMismatch(checksum)
         _copy_metadata_best_effort(source, partial)
+        if target.exists():
+            raise FileExistsError(f"target appeared during copy: {target}")
         partial.replace(target)
+        fsync_directory(target.parent)
         return checksum
     except OSError:
         with suppress(OSError):
@@ -387,6 +449,26 @@ def _copy_metadata_best_effort(source: Path, target: Path) -> None:
         shutil.copystat(source, target)
     except OSError:
         pass
+
+
+def _source_fingerprint(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_size, stat.st_mtime_ns
+
+
+def _source_destination_overlap(
+    source_paths: tuple[SourcePath, ...],
+    plan: DestinationPlan,
+) -> str | None:
+    """Refuse plans where a replica project folder would be written inside a source."""
+
+    for source in source_paths:
+        source_root = source.root.resolve()
+        for project_root in plan.project_roots:
+            resolved = project_root.resolve()
+            if resolved.is_relative_to(source_root) or source_root.is_relative_to(resolved):
+                return f"replica project {resolved} overlaps source {source_root}"
+    return None
 
 
 def _job_file(
