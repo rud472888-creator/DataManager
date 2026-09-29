@@ -19,9 +19,8 @@ def lifecycle(tmp_path) -> JobLifecycleService:
 def _request(project_name: str = "Runtime Test") -> JobCreateRequest:
     return JobCreateRequest(
         project_name=project_name,
-        source_volume_id="mock-source",
-        dest_main_id="dest-main",
-        dest_backup_id="dest-backup",
+        source_path_ids=("mock-source",),
+        replica_path_ids=("path1", "path2"),
         operator_origin="runtime_test",
         policy={},
     )

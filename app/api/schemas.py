@@ -62,9 +62,8 @@ class CommandDecisionPayload(TypedDict):
 
 class JobCreatePayload(TypedDict):
     project_name: str
-    source_volume_id: str
-    dest_main_id: str
-    dest_backup_id: str | None
+    source_path_ids: list[str]
+    replica_path_ids: list[str]
     operator_origin: str
     policy: dict[str, object]
 
@@ -72,9 +71,8 @@ class JobCreatePayload(TypedDict):
 class JobSummaryPayload(TypedDict):
     job_id: str
     project_name: str
-    source_volume_id: str
-    dest_main_id: str
-    dest_backup_id: str | None
+    source_path_ids: list[str]
+    replica_path_ids: list[str]
     state: str
     current_step: str | None
 

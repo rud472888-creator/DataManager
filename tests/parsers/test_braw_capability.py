@@ -49,6 +49,7 @@ def test_registry_keeps_mock_opt_in() -> None:
     assert production.by_format("BRAW") is not None
     assert production.by_format("R3D") is not None
     assert production.by_format("ARRIRAW") is not None
+    assert production.by_format("STANDARD_VIDEO") is not None
     assert production.by_format("BRAW_MOCK") is None
     assert test_registry.by_format("BRAW_MOCK") is not None
 
@@ -57,16 +58,24 @@ def test_future_format_adapters_are_truthfully_unavailable(tmp_path) -> None:
     registry = default_registry()
     r3d = registry.by_format("R3D")
     arriraw = registry.by_format("ARRIRAW")
+    standard_video = registry.by_format("STANDARD_VIDEO")
     r3d_sample = tmp_path / "R001_C001.r3d"
     arri_sample = tmp_path / "ALEXA_C001.ari"
+    mov_sample = tmp_path / "B001_C001.mov"
+    mp4_sample = tmp_path / "B001_C002.mp4"
     r3d_sample.write_bytes(b"red")
     arri_sample.write_bytes(b"arri")
+    mov_sample.write_bytes(b"quicktime")
+    mp4_sample.write_bytes(b"mpeg-4")
 
     assert r3d is not None
     assert arriraw is not None
+    assert standard_video is not None
     assert r3d.probe(r3d_sample).supported is True
     assert arriraw.probe(arri_sample).supported is True
     assert arriraw.probe(tmp_path / "ALEXA_C002.mxf").supported is True
+    assert standard_video.probe(mov_sample).supported is True
+    assert standard_video.probe(mp4_sample).supported is True
     assert r3d.capabilities().metadata is CapabilityState.UNAVAILABLE
     assert arriraw.capabilities().metadata is CapabilityState.UNAVAILABLE
 

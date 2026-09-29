@@ -16,6 +16,7 @@ SUPPORTED_MEDIA_FORMATS = (
     MediaFormatProfile("BRAW", (".braw",)),
     MediaFormatProfile("R3D", (".r3d",)),
     MediaFormatProfile("ARRIRAW", (".ari", ".mxf")),
+    MediaFormatProfile("STANDARD_VIDEO", (".mov", ".mp4")),
 )
 
 SUPPORTED_SUFFIXES = frozenset(

@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
+  "reportlab>=4.4",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +21,7 @@ dev = [
   "mypy>=1.10",
   "playwright>=1.45",
   "pytest>=8.2",
+  "pypdf>=5",
   "ruff>=0.6",
 ]
 
@@ -34,11 +36,10 @@ packages = [
   "app.parsers",
   "app.persistence",
   "app.runtime",
-  "app.web_console",
 ]
 
 [tool.setuptools.package-data]
-app = ["web_console/*.html", "web_console/*.css", "web_console/*.js", "persistence/*.sql"]
+app = ["persistence/*.sql", "runtime/fonts/*.ttf", "runtime/fonts/*.txt", "runtime/fonts/*.md"]
 
 [tool.ruff]
 line-length = 100

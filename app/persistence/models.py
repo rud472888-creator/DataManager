@@ -9,9 +9,8 @@ from dataclasses import dataclass
 class Job:
     job_id: str
     project_name: str
-    source_volume_id: str
-    dest_main_id: str
-    dest_backup_id: str | None
+    source_path_ids: tuple[str, ...]
+    replica_path_ids: tuple[str, ...]
     state: str
     operator_origin: str
     current_step: str | None = None
@@ -36,14 +35,23 @@ class JobEvent:
 class JobFile:
     file_id: str
     job_id: str
+    source_path_id: str
     source_relpath: str
     size_bytes: int
     status: str
-    dest_main_relpath: str | None = None
-    dest_backup_relpath: str | None = None
     checksum_source: str | None = None
-    checksum_main: str | None = None
-    checksum_backup: str | None = None
+    replica_results: tuple[JobFileReplica, ...] = ()
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class JobFileReplica:
+    file_id: str
+    path_id: str
+    dest_relpath: str | None
+    checksum: str | None
+    status: str
     error_code: str | None = None
     error_message: str | None = None
 

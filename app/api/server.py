@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from app.api.routes_clips import router as clips_router
 from app.api.routes_jobs import router as jobs_router
@@ -22,7 +18,7 @@ from app.runtime.agent import RuntimeAgent
 
 
 def create_app() -> FastAPI:
-    """Create the local runtime API and static remote console shell."""
+    """Create the local runtime API."""
 
     settings = load_settings()
     agent = RuntimeAgent(settings=settings, database=Database(settings.database_path))
@@ -31,10 +27,9 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Footage Data Manager",
         version="0.1.0",
-        description="macOS local runtime API with a REST/WebSocket remote web console.",
+        description="macOS local runtime API.",
     )
     app.state.agent = agent
-    web_console_dir = Path(__file__).resolve().parents[1] / "web_console"
 
     app.include_router(runtime_router)
     app.include_router(volumes_router)
@@ -44,10 +39,5 @@ def create_app() -> FastAPI:
     app.include_router(clips_router)
     app.include_router(settings_router)
     app.include_router(websocket_router)
-    app.mount("/static", StaticFiles(directory=web_console_dir), name="static")
-
-    @app.get("/", include_in_schema=False)
-    def console_home() -> FileResponse:
-        return FileResponse(web_console_dir / "index.html")
 
     return app
