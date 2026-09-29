@@ -1,5 +1,7 @@
 import json
 
+from pypdf import PdfReader
+
 from app.parsers.braw_parser import BrawAdapter, MockBrawParser
 from app.parsers.standard_video_parser import StandardVideoParser
 from app.persistence.db import Database
@@ -144,8 +146,10 @@ def test_clone_report_generation_persists_checksum_and_manifest(tmp_path) -> Non
     assert pdf_bytes.startswith(b"%PDF")
     assert b"startxref" in pdf_bytes
     assert b"trailer" in pdf_bytes
-    assert b"/BaseFont /Helvetica" in pdf_bytes
-    assert b"Source SHA256" in pdf_bytes
+    pdf_text = "\n".join(page.extract_text() for page in PdfReader(checksum_pdf).pages)
+    assert "Source SHA256" in pdf_text
+    assert "복제 무결성 보고서" in pdf_text
+    assert "Reports" in pdf_text
     _assert_pdf_startxref_points_to_xref(pdf_bytes)
     manifest = json.loads((project_root / "00_Master/manifests/manifest.json").read_text())
     assert manifest["job_id"] == job_id
