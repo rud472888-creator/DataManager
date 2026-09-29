@@ -286,10 +286,10 @@ def test_replica_failure_yields_warn_after_other_replica_success(tmp_path, monke
 
     original = offload._copy_and_hash
 
-    def flaky_replica(source_path: Path, target: Path) -> str:
+    def flaky_replica(source_path: Path, target: Path, expected_checksum: str) -> str:
         if "path2" in target.parts:
             raise OSError("replica device unavailable")
-        return original(source_path, target)
+        return original(source_path, target, expected_checksum)
 
     monkeypatch.setattr(offload, "_copy_and_hash", flaky_replica)
 
@@ -318,7 +318,7 @@ def test_source_disappearance_yields_failed(tmp_path, monkeypatch) -> None:
 
     from app.runtime import offload
 
-    def missing_source(source_path: Path, target: Path) -> str:
+    def missing_source(source_path: Path, target: Path, expected_checksum: str) -> str:
         raise FileNotFoundError(f"missing {source_path}")
 
     monkeypatch.setattr(offload, "_copy_and_hash", missing_source)
@@ -337,3 +337,170 @@ def test_source_disappearance_yields_failed(tmp_path, monkeypatch) -> None:
 
     assert result.state is JobState.FAILED
     assert result.files[0].error_code == "replica_copy_failed"
+
+
+def _single_clip_plan(tmp_path: Path, run_name: str = "R#1") -> DestinationPlan:
+    return DestinationPlan(
+        project_name="Project",
+        replica_paths=(ReplicaPath(path_id="path1", root=tmp_path / "path1"),),
+        footage_run_name=run_name,
+    )
+
+
+def test_corrupt_replica_is_never_published_and_retry_succeeds(tmp_path, monkeypatch) -> None:
+    database = Database(tmp_path / "fdm.sqlite3")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "A001_C001.braw").write_bytes(b"clip")
+    target = tmp_path / "path1/Project/01_Footage/R#1/path1/A001_C001.braw"
+
+    from app.runtime import offload
+
+    def corrupting_copy(src: Path, dst: Path) -> None:
+        dst.write_bytes(b"clix")
+
+    monkeypatch.setattr(offload.shutil, "copyfile", corrupting_copy)
+    result = OffloadService(database).execute(
+        job_id=_make_job(database),
+        source_paths=(SourcePath(path_id="path1", root=source),),
+        plan=_single_clip_plan(tmp_path),
+    )
+
+    assert result.state is JobState.FAILED
+    assert result.files[0].replica_results[0].error_code == "replica_checksum_mismatch"
+    assert not target.exists()
+    assert list(target.parent.iterdir()) == []
+
+    monkeypatch.undo()
+    retry = OffloadService(database).execute(
+        job_id=_make_job(database),
+        source_paths=(SourcePath(path_id="path1", root=source),),
+        plan=_single_clip_plan(tmp_path),
+    )
+
+    assert retry.state is JobState.COMPLETED
+    assert target.read_bytes() == b"clip"
+
+
+def test_replica_is_verified_by_rereading_from_disk(tmp_path, monkeypatch) -> None:
+    database = Database(tmp_path / "fdm.sqlite3")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "A001_C001.braw").write_bytes(b"clip")
+
+    from app.runtime import offload
+
+    calls: list[tuple[str, bool]] = []
+    synced: list[str] = []
+    original_hash = offload.sha256_file
+
+    def recording_hash(path: Path, *args: object, bypass_cache: bool = False) -> str:
+        calls.append((path.name, bypass_cache))
+        return original_hash(path, bypass_cache=bypass_cache)
+
+    monkeypatch.setattr(offload, "sha256_file", recording_hash)
+    monkeypatch.setattr(offload, "fsync_file", lambda path: synced.append(path.name))
+    result = OffloadService(database).execute(
+        job_id=_make_job(database),
+        source_paths=(SourcePath(path_id="path1", root=source),),
+        plan=_single_clip_plan(tmp_path),
+    )
+
+    assert result.state is JobState.COMPLETED
+    partial_reads = [bypass for name, bypass in calls if ".partial-" in name]
+    assert partial_reads == [True]
+    assert len(synced) == 1 and ".partial-" in synced[0]
+
+
+def test_replica_inside_source_is_refused_and_source_untouched(tmp_path) -> None:
+    database = Database(tmp_path / "fdm.sqlite3")
+    source = tmp_path / "card"
+    source.mkdir()
+    (source / "A001_C001.braw").write_bytes(b"clip")
+    before = sorted(p.relative_to(source) for p in source.rglob("*"))
+
+    for replica_root, project in ((source / "backup", "Project"), (tmp_path, "card")):
+        result = OffloadService(database).execute(
+            job_id=_make_job(database),
+            source_paths=(SourcePath(path_id="path1", root=source),),
+            plan=DestinationPlan(
+                project_name=project,
+                replica_paths=(ReplicaPath(path_id="path1", root=replica_root),),
+            ),
+        )
+        assert result.state is JobState.FAILED
+        assert "destination_overlaps_source" in result.reason
+
+    assert sorted(p.relative_to(source) for p in source.rglob("*")) == before
+
+
+def test_source_modified_during_copy_fails(tmp_path, monkeypatch) -> None:
+    database = Database(tmp_path / "fdm.sqlite3")
+    source = tmp_path / "source"
+    source.mkdir()
+    clip = source / "A001_C001.braw"
+    clip.write_bytes(b"clip")
+
+    from app.runtime import offload
+
+    original_copy = offload.shutil.copyfile
+
+    def copy_then_touch_source(src: Path, dst: Path) -> None:
+        original_copy(src, dst)
+        clip.write_bytes(b"clip-grown")
+
+    monkeypatch.setattr(offload.shutil, "copyfile", copy_then_touch_source)
+    result = OffloadService(database).execute(
+        job_id=_make_job(database),
+        source_paths=(SourcePath(path_id="path1", root=source),),
+        plan=_single_clip_plan(tmp_path),
+    )
+
+    assert result.state is JobState.FAILED
+    assert result.files[0].error_code == "source_changed"
+
+
+def test_source_read_error_fails_job_with_recorded_file(tmp_path, monkeypatch) -> None:
+    database = Database(tmp_path / "fdm.sqlite3")
+    job_id = _make_job(database)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "A001_C001.braw").write_bytes(b"clip")
+
+    from app.runtime import offload
+
+    def unreadable(path: Path, *args: object, **kwargs: object) -> str:
+        raise OSError("I/O error reading card")
+
+    monkeypatch.setattr(offload, "sha256_file", unreadable)
+    result = OffloadService(database).execute(
+        job_id=job_id,
+        source_paths=(SourcePath(path_id="path1", root=source),),
+        plan=_single_clip_plan(tmp_path),
+    )
+
+    assert result.state is JobState.FAILED
+    assert result.files[0].error_code == "source_read_failed"
+    with database.session() as connection:
+        job = JobRepository(connection).get(job_id)
+    assert job is not None and job.state == "FAILED"
+
+
+def test_offload_preserves_source_bytes_and_timestamps(tmp_path) -> None:
+    database = Database(tmp_path / "fdm.sqlite3")
+    source = tmp_path / "source"
+    _write_source(source)
+    snapshot = {
+        p: (p.read_bytes(), p.stat().st_mtime_ns) for p in source.rglob("*") if p.is_file()
+    }
+
+    result = OffloadService(database).execute(
+        job_id=_make_job(database),
+        source_paths=(SourcePath(path_id="path1", root=source),),
+        plan=_single_clip_plan(tmp_path),
+    )
+
+    assert result.state is JobState.COMPLETED
+    assert {
+        p: (p.read_bytes(), p.stat().st_mtime_ns) for p in source.rglob("*") if p.is_file()
+    } == snapshot

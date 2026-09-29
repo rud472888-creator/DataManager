@@ -75,10 +75,10 @@ def test_replica_failure_path_remains_warn(tmp_path) -> None:
 
     original = offload._copy_and_hash
 
-    def fail_replica(source_path, target):
+    def fail_replica(source_path, target, expected_checksum):
         if "path2" in target.parts:
             raise OSError("replica disconnected")
-        return original(source_path, target)
+        return original(source_path, target, expected_checksum)
 
     offload._copy_and_hash = fail_replica
     try:
